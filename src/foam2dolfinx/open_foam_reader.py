@@ -117,12 +117,15 @@ class OpenFOAMReader:
             )
         degree = 1  # Set polynomial degree
         cell = ufl.Cell(shape)
-        self.mesh_element = basix.ufl.element(
+        self.mesh_vector_element = basix.ufl.element(
             "Lagrange", cell.cellname(), degree, shape=(3,)
+        )
+        self.mesh_scalar_element = basix.ufl.element(
+            "Lagrange", cell.cellname(), degree, shape=()
         )
 
         # Create dolfinx Mesh
-        mesh_ufl = ufl.Mesh(self.mesh_element)
+        mesh_ufl = ufl.Mesh(self.mesh_vector_element)
         self.dolfinx_mesh = create_mesh(
             MPI.COMM_WORLD, self.connectivity, self.OF_mesh.points, mesh_ufl
         )
@@ -141,10 +144,17 @@ class OpenFOAMReader:
             the dolfinx function
         """
         self._read_with_pyvista(t=t)
-        self._create_dolfinx_mesh()
-        self.function_space = dolfinx.fem.functionspace(
-            self.dolfinx_mesh, self.mesh_element
-        )
+
+        # Create dolfinx mesh if it doesn't exist
+        if not hasattr(self, "dolfinx_mesh"):
+            self._create_dolfinx_mesh()
+
+        if name == "U":
+            element = self.mesh_vector_element
+        else:
+            element = self.mesh_scalar_element
+
+        self.function_space = dolfinx.fem.functionspace(self.dolfinx_mesh, element)
         u = dolfinx.fem.Function(self.function_space)
 
         num_vertices = (
