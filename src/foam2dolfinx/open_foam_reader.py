@@ -19,11 +19,11 @@ class OpenFOAMReader:
 
         Args:
             filename: the filename
-            OF_mesh_cell_type_value: cell type id (12 corresponds to HEXAHEDRON)
+            cell_type: cell type id (12 corresponds to HEXAHEDRON)
 
         Attributes:
             filename: the filename
-            OF_mesh_cell_type_value: cell type id (12 corresponds to HEXAHEDRON)
+            cell_type: cell type id (12 corresponds to HEXAHEDRON)
             reader: pyvista OpenFOAM reader for .foam files
             OF_mesh: the mesh from the openfoam file
             OF_cells: an array of the cells with associated vertices
@@ -33,10 +33,14 @@ class OpenFOAMReader:
             dolfinx_mesh: the dolfinx mesh
             function_space: the function space of the dolfinx function returned in
                 create_dolfinx_function()
+
+        Notes:
+            The cell type refers to the VTK cell type, a full list of cells and their
+            respective integers can be found at: https://vtk.org/doc/nightly/html/vtkCellType_8h_source.html
     """
 
     filename: str
-    OF_mesh_cell_type_value: int
+    cell_type: int
 
     reader: pyvista.POpenFOAMReader
     OF_mesh: pyvista.pyvista_ndarray | pyvista.DataSet
@@ -46,11 +50,21 @@ class OpenFOAMReader:
     dolfinx_mesh: dolfinx.mesh.Mesh
     function_space: dolfinx.fem.FunctionSpace
 
-    def __init__(self, filename, OF_mesh_cell_type_value: int = 12):
+    def __init__(self, filename, cell_type: int = 12):
         self.filename = filename
-        self.OF_mesh_cell_type_value = OF_mesh_cell_type_value
+        self.cell_type = cell_type
 
         self.reader = pyvista.POpenFOAMReader(self.filename)
+
+    @property
+    def cell_type(self):
+        return self._cell_type
+
+    @cell_type.setter
+    def cell_type(self, value):
+        if not isinstance(value, int):
+            raise TypeError("cell_type value should be an int")
+        self._cell_type = value
 
     def _read_with_pyvista(self, t: float):
         """reads the filename dolfinx.fem.Function from the OpenFOAM file.
@@ -70,7 +84,7 @@ class OpenFOAMReader:
         assert hasattr(self.OF_mesh, "cells_dict")  # Ensure the mesh has cell data
         OF_cells_dict = self.OF_mesh.cells_dict  # Get the cell dictionary
 
-        self.OF_cells = OF_cells_dict.get(self.OF_mesh_cell_type_value)
+        self.OF_cells = OF_cells_dict.get(self.cell_type)
 
         # Raise error if OF_mesh is mixed topology
         if len(OF_cells_dict.keys()) > 1:
@@ -79,7 +93,7 @@ class OpenFOAMReader:
         # Raise error if no cells of the specified type are found in the OF_mesh
         if self.OF_cells is None:
             raise ValueError(
-                f"No {self.OF_mesh_cell_type_value} cells found in the mesh. Found "
+                f"No {self.cell_type} cells found in the mesh. Found "
                 f"{OF_cells_dict.keys()}"
             )
 
@@ -92,13 +106,13 @@ class OpenFOAMReader:
         self.connectivity = self.OF_cells[rows, args_conn]  # Reorder connectivity
 
         # Define mesh element
-        if self.OF_mesh_cell_type_value == 12:
+        if self.cell_type == 12:
             shape = "hexahedron"
-        elif self.OF_mesh_cell_type_value == 10:
+        elif self.cell_type == 10:
             shape = "tetrahedron"
         else:
             raise ValueError(
-                f"Cell type: {self.OF_mesh_cell_type_value}, not supported, please use"
+                f"Cell type: {self.cell_type}, not supported, please use"
                 " either 12 (hexahedron) or 10 (tetrahedron) cells in OF mesh"
             )
         degree = 1  # Set polynomial degree
