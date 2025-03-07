@@ -72,11 +72,14 @@ class OpenFOAMReader:
             raise ValueError(f"Unknown type {self.OF_mesh_type_value}")
         degree = 1
         cell = ufl.Cell(shape)
-        self.mesh_element = basix.ufl.element(
+        self.mesh_vector_element = basix.ufl.element(
             "Lagrange", cell.cellname(), degree, shape=(3,)
         )
+        self.mesh_scalar_element = basix.ufl.element(
+            "Lagrange", cell.cellname(), degree, shape=()
+        )
 
-        mesh_ufl = ufl.Mesh(self.mesh_element)
+        mesh_ufl = ufl.Mesh(self.mesh_vector_element)
 
         # Create Dolfinx Mesh
         self.dolfinx_mesh = create_mesh(
@@ -95,8 +98,17 @@ class OpenFOAMReader:
             the dolfinx function
         """
         self._read_with_pyvista(t=t)
-        self._create_dolfinx_mesh()
-        self.function_space = fem.functionspace(self.dolfinx_mesh, self.mesh_element)
+
+        # Create dolfinx mesh if it doesn't exist
+        if not hasattr(self, "dolfinx_mesh"):
+            self._create_dolfinx_mesh()
+
+        if name == "U":
+            element = self.mesh_vector_element
+        else:
+            element = self.mesh_scalar_element
+
+        self.function_space = fem.functionspace(self.dolfinx_mesh, element)
         u = fem.Function(self.function_space)
 
         num_vertices = (
