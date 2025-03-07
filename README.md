@@ -5,6 +5,9 @@
 
 foam2dolfinx is a tool for converting OpenFOAM output files to functions that can be used within [dolfinx](https://github.com/FEniCS/dolfinx).
 
+> [!NOTE]  
+> This small package was inspired by Stefano Riva's [ROSE-pyforce](https://github.com/ERMETE-Lab/ROSE-pyforce) repository.
+
 ## Installation
 
 ```python
