@@ -84,7 +84,16 @@ class OpenFOAMReader:
         )
         self.dolfinx_mesh.topology.index_map(self.dolfinx_mesh.topology.dim).size_global
 
-    def create_dolfinx_function(self, t=None) -> fem.Function:
+    def create_dolfinx_function(self, t=None, name="U") -> fem.Function:
+        """Creates a dolfinx.fem.Function from the OpenFOAM file.
+
+        Args:
+            t: timestamp of the data to read
+            name: Name of the field in the openfoam file
+
+        Returns:
+            the dolfinx function
+        """
         self._read_with_pyvista(t=t)
         self._create_dolfinx_mesh()
         self.function_space = fem.functionspace(self.dolfinx_mesh, self.mesh_element)
@@ -118,7 +127,7 @@ class OpenFOAMReader:
         ][cell_indices, vertex_positions]
 
         assert hasattr(self.OF_mesh, "point_data")
-        u.x.array[:] = self.OF_mesh.point_data["U"][vertex_map].flatten()
+        u.x.array[:] = self.OF_mesh.point_data[name][vertex_map].flatten()
 
         return u
 
