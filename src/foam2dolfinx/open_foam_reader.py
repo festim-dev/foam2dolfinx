@@ -8,7 +8,7 @@ from dolfinx import fem
 from dolfinx.mesh import create_mesh
 import dolfinx
 
-__all__ = ["OpenFOAMReader"]
+__all__ = ["OpenFOAMReader, find_closest_value"]
 
 
 class OpenFOAMReader:
@@ -18,22 +18,22 @@ class OpenFOAMReader:
 
         Args:
             filename: the filename
-            OF_mesh_type_value: cell type id (12 corresponds to HEXAHEDRON)
+            OF_mesh_cell_type_value: cell type id (12 corresponds to HEXAHEDRON)
 
         Attributes:
             filename: the filename
-            OF_mesh_type_value: cell type id (12 corresponds to HEXAHEDRON)
+            OF_mesh_cell_type_value: cell type id (12 corresponds to HEXAHEDRON)
     """
 
     dolfinx_mesh: dolfinx.mesh.Mesh
     OF_mesh: pyvista.pyvista_ndarray | pyvista.DataSet
     reader: pyvista.POpenFOAMReader
     filename: str
-    OF_mesh_type_value: int
+    OF_mesh_cell_type_value: int
 
-    def __init__(self, filename, OF_mesh_type_value: int = 12):
+    def __init__(self, filename, OF_mesh_cell_type_value: int = 12):
         self.filename = filename
-        self.OF_mesh_type_value = OF_mesh_type_value
+        self.OF_mesh_cell_type_value = OF_mesh_cell_type_value
 
         self.reader = pyvista.POpenFOAMReader(self.filename)
 
@@ -46,12 +46,12 @@ class OpenFOAMReader:
         assert hasattr(self.OF_mesh, "cells_dict")
         OF_cells_dict = self.OF_mesh.cells_dict
 
-        self.OF_cells = OF_cells_dict.get(self.OF_mesh_type_value)
+        self.OF_cells = OF_cells_dict.get(self.OF_mesh_cell_type_value)
         if len(OF_cells_dict.keys()) > 1:
             raise NotImplementedError("Cannot support mixed-topology meshes")
         if self.OF_cells is None:
             raise ValueError(
-                f"No {self.OF_mesh_type_value} cells found in the mesh. Found "
+                f"No {self.OF_mesh_cell_type_value} cells found in the mesh. Found "
                 f"{OF_cells_dict.keys()}"
             )
 
@@ -64,12 +64,15 @@ class OpenFOAMReader:
         self.connectivity = self.OF_cells[rows, args_conn]
 
         # Define mesh element
-        if self.OF_mesh_type_value == 12:
+        if self.OF_mesh_cell_type_value == 12:
             shape = "hexahedron"
-        elif self.OF_mesh_type_value == 10:
+        elif self.OF_mesh_cell_type_value == 10:
             shape = "tetrahedron"
         else:
-            raise ValueError(f"Unknown type {self.OF_mesh_type_value}")
+            raise ValueError(
+                f"Cell type: {self.OF_mesh_cell_type_value}, not supported, please use"
+                " either 12 (hexahedron) or 10 (tetrahedron) cells in OF mesh"
+            )
         degree = 1
         cell = ufl.Cell(shape)
         self.mesh_element = basix.ufl.element(
