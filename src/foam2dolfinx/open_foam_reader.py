@@ -70,18 +70,18 @@ class OpenFOAMReader:
         assert hasattr(self.OF_mesh, "cells_dict")  # Ensure the mesh has cell data
         OF_cells_dict = self.OF_mesh.cells_dict  # Get the cell dictionary
 
-        self.OF_cells = OF_cells_dict.get(
-            self.OF_mesh_cell_type_value
-        )  # Get cells of the specified type
+        self.OF_cells = OF_cells_dict.get(self.OF_mesh_cell_type_value)
+
+        # Raise error if OF_mesh is mixed topology
         if len(OF_cells_dict.keys()) > 1:
-            raise NotImplementedError(
-                "Cannot support mixed-topology meshes"
-            )  # Raise error if mixed topology
+            raise NotImplementedError("Cannot support mixed-topology meshes")
+
+        # Raise error if no cells of the specified type are found in the OF_mesh
         if self.OF_cells is None:
             raise ValueError(
                 f"No {self.OF_mesh_cell_type_value} cells found in the mesh. Found "
                 f"{OF_cells_dict.keys()}"
-            )  # Raise error if no cells of the specified type are found
+            )
 
     def _create_dolfinx_mesh(self):
         """Creates a dolfinx.mesh.Mesh based on the elements within the OpenFOAM mesh"""
@@ -107,15 +107,12 @@ class OpenFOAMReader:
             "Lagrange", cell.cellname(), degree, shape=(3,)
         )
 
-        mesh_ufl = ufl.Mesh(self.mesh_element)  # Create UFL mesh
-
         # Create dolfinx Mesh
+        mesh_ufl = ufl.Mesh(self.mesh_element)
         self.dolfinx_mesh = create_mesh(
             MPI.COMM_WORLD, self.connectivity, self.OF_mesh.points, mesh_ufl
-        )  # Create dolfinx mesh
-        self.dolfinx_mesh.topology.index_map(
-            self.dolfinx_mesh.topology.dim
-        ).size_global  # Ensure global size is set
+        )
+        self.dolfinx_mesh.topology.index_map(self.dolfinx_mesh.topology.dim).size_global
 
     def create_dolfinx_function(
         self, t: Optional[float] = None, name: Optional[str] = "U"
@@ -129,22 +126,25 @@ class OpenFOAMReader:
         Returns:
             the dolfinx function
         """
-        self._read_with_pyvista(t=t)  # Read data from OpenFOAM file
-        self._create_dolfinx_mesh()  # Create dolfinx mesh
+        self._read_with_pyvista(t=t)
+        self._create_dolfinx_mesh()
         self.function_space = dolfinx.fem.functionspace(
             self.dolfinx_mesh, self.mesh_element
-        )  # Create function space
-        u = dolfinx.fem.Function(self.function_space)  # Create dolfinx function
+        )
+        u = dolfinx.fem.Function(self.function_space)
 
         num_vertices = (
             self.dolfinx_mesh.topology.index_map(0).size_local
             + self.dolfinx_mesh.topology.index_map(0).num_ghosts
-        )  # Calculate number of vertices
-        vertex_map = np.empty(num_vertices, dtype=np.int32)  # Initialize vertex map
+        )
+        vertex_map = np.empty(num_vertices, dtype=np.int32)
+
+        # Get cell-to-vertex connectivity
         c_to_v = self.dolfinx_mesh.topology.connectivity(
             self.dolfinx_mesh.topology.dim, 0
-        )  # Get cell-to-vertex connectivity
+        )
 
+        # Map the OF_mesh vertices to dolfinx_mesh vertices
         num_cells = (
             self.dolfinx_mesh.topology.index_map(
                 self.dolfinx_mesh.topology.dim
@@ -152,29 +152,21 @@ class OpenFOAMReader:
             + self.dolfinx_mesh.topology.index_map(
                 self.dolfinx_mesh.topology.dim
             ).num_ghosts
-        )  # Calculate number of cells
-        vertices = np.array(
-            [c_to_v.links(cell) for cell in range(num_cells)]
-        )  # Get vertices for each cell
-        flat_vertices = np.concatenate(vertices)  # Flatten vertex array
-        cell_indices = np.repeat(
-            np.arange(num_cells), [len(v) for v in vertices]
-        )  # Repeat cell indices
-        vertex_positions = np.concatenate(
-            [np.arange(len(v)) for v in vertices]
-        )  # Get vertex positions
+        )
+        vertices = np.array([c_to_v.links(cell) for cell in range(num_cells)])
+        flat_vertices = np.concatenate(vertices)
+        cell_indices = np.repeat(np.arange(num_cells), [len(v) for v in vertices])
+        vertex_positions = np.concatenate([np.arange(len(v)) for v in vertices])
 
-        # Assign values using NumPy indexing
         vertex_map[flat_vertices] = self.connectivity[
             self.dolfinx_mesh.topology.original_cell_index
-        ][cell_indices, vertex_positions]  # Map vertices to connectivity
+        ][cell_indices, vertex_positions]
 
-        assert hasattr(self.OF_mesh, "point_data")  # Ensure mesh has point data
-        u.x.array[:] = self.OF_mesh.point_data[name][
-            vertex_map
-        ].flatten()  # Assign point data to function
+        # Assign values in OF_mesh to dolfinx_mesh
+        assert hasattr(self.OF_mesh, "point_data")
+        u.x.array[:] = self.OF_mesh.point_data[name][vertex_map].flatten()
 
-        return u  # Return the dolfinx function
+        return u
 
 
 def find_closest_value(values: list[float], target: float) -> float:
