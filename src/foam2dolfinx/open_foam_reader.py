@@ -115,7 +115,6 @@ class OpenFOAMReader:
         self.dolfinx_mesh = create_mesh(
             MPI.COMM_WORLD, self.connectivity, self.OF_mesh.points, mesh_ufl
         )
-        self.dolfinx_mesh.topology.index_map(self.dolfinx_mesh.topology.dim).size_global
 
     def create_dolfinx_function(
         self, t: Optional[float] = None, name: Optional[str] = "U"
