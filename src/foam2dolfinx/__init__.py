@@ -8,3 +8,4 @@ except Exception:
 
 from .open_foam_reader import OpenFOAMReader
 
+__all__ = ["OpenFOAMReader"]
