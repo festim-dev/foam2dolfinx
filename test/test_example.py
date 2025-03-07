@@ -26,7 +26,7 @@ def test_baby_example(tmpdir):
     foam_file = extract_path / "baby_example/pv.foam"
 
     # read the .foam file
-    my_of_reader = OpenFOAMReader(filename=str(foam_file), OF_mesh_type_value=10)
+    my_of_reader = OpenFOAMReader(filename=str(foam_file), OF_mesh_cell_type_value=10)
 
     vel = my_of_reader.create_dolfinx_function(t=time, name="U")
     T = my_of_reader.create_dolfinx_function(t=time, name="T")
