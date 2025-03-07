@@ -1,0 +1,2 @@
+ignore:
+  - "foam2dolfinx/_version.py"  # ignore version file

@@ -48,7 +48,7 @@ class OpenFOAMReader:
 
         self.OF_cells = OF_cells_dict.get(self.OF_mesh_type_value)
         if len(OF_cells_dict.keys()) > 1:
-            raise NotImplementedError("Cannot support mixed-topology meshes.")
+            raise NotImplementedError("Cannot support mixed-topology meshes")
         if self.OF_cells is None:
             raise ValueError(
                 f"No {self.OF_mesh_type_value} cells found in the mesh. Found "
