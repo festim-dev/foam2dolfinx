@@ -10,7 +10,7 @@ def test_error_rasied_when_using_mixed_topology_mesh():
     test_value = 1
     my_reader = OpenFOAMReader(
         filename=examples.download_cavity(load=False),
-        OF_mesh_cell_type_value=test_value,
+        cell_type=test_value,
     )
 
     # Create a random number generator

@@ -15,7 +15,7 @@ def test_error_rasied_when_using_mixed_topology_mesh():
 
 def test_error_rasied_when_cells_wanted_are_not_in_file_provided():
     my_reader = OpenFOAMReader(
-        filename=examples.download_cavity(load=False), OF_mesh_cell_type_value=1
+        filename=examples.download_cavity(load=False), cell_type=1
     )
 
     with pytest.raises(
