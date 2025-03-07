@@ -3,9 +3,12 @@ from mpi4py import MPI
 import basix
 import numpy as np
 import pyvista
-import ufl
+import ufl  # type: ignore
 from dolfinx import fem
 from dolfinx.mesh import create_mesh
+import dolfinx
+
+__all__ = ["OpenFOAMReader"]
 
 
 class OpenFOAMReader:
@@ -22,12 +25,15 @@ class OpenFOAMReader:
             OF_mesh_type_value: cell type id (12 corresponds to HEXAHEDRON)
     """
 
+    dolfinx_mesh: dolfinx.mesh.Mesh
+    OF_mesh: pyvista.pyvista_ndarray | pyvista.DataSet
+    reader: pyvista.POpenFOAMReader
+    filename: str
+    OF_mesh_type_value: int
+
     def __init__(self, filename, OF_mesh_type_value: int = 12):
         self.filename = filename
         self.OF_mesh_type_value = OF_mesh_type_value
-
-        self.OF_mesh = None
-        self.dolfinx_mesh = None
 
         self.reader = pyvista.POpenFOAMReader(self.filename)
 
@@ -37,9 +43,12 @@ class OpenFOAMReader:
         self.OF_mesh = OF_multiblock["internalMesh"]
 
         # Dictionary mapping cell type to connectivity
+        assert hasattr(self.OF_mesh, "cells_dict")
         OF_cells_dict = self.OF_mesh.cells_dict
 
         self.OF_cells = OF_cells_dict.get(self.OF_mesh_type_value)
+        if len(OF_cells_dict.keys()) > 1:
+            raise NotImplementedError("Cannot support mixed-topology meshes.")
         if self.OF_cells is None:
             raise ValueError(
                 f"No {self.OF_mesh_type_value} cells found in the mesh. Found "
@@ -57,6 +66,10 @@ class OpenFOAMReader:
         # Define mesh element
         if self.OF_mesh_type_value == 12:
             shape = "hexahedron"
+        elif self.OF_mesh_type_value == 10:
+            shape = "tetrahedron"
+        else:
+            raise ValueError(f"Unknown type {self.OF_mesh_type_value}")
         degree = 1
         cell = ufl.Cell(shape)
         self.mesh_element = basix.ufl.element(
@@ -94,13 +107,17 @@ class OpenFOAMReader:
                 self.dolfinx_mesh.topology.dim
             ).num_ghosts
         )
-        for cell in range(num_cells):
-            vertices = c_to_v.links(cell)
-            for i, vertex in enumerate(vertices):
-                vertex_map[vertex] = self.connectivity[
-                    self.dolfinx_mesh.topology.original_cell_index
-                ][cell][i]
+        vertices = np.array([c_to_v.links(cell) for cell in range(num_cells)])
+        flat_vertices = np.concatenate(vertices)
+        cell_indices = np.repeat(np.arange(num_cells), [len(v) for v in vertices])
+        vertex_positions = np.concatenate([np.arange(len(v)) for v in vertices])
 
+        # Assign values using NumPy indexing
+        vertex_map[flat_vertices] = self.connectivity[
+            self.dolfinx_mesh.topology.original_cell_index
+        ][cell_indices, vertex_positions]
+
+        assert hasattr(self.OF_mesh, "point_data")
         u.x.array[:] = self.OF_mesh.point_data["U"][vertex_map].flatten()
 
         return u
@@ -117,5 +134,5 @@ def find_closest_value(values: list[float], target: float) -> float:
     Returns:
         float: The closest value from the array.
     """
-    values = np.asarray(values)  # Ensure input is a NumPy array
-    return values[np.abs(values - target).argmin()]
+    values_ = np.asarray(values)  # Ensure input is a NumPy array
+    return values_[np.abs(values_ - target).argmin()]
