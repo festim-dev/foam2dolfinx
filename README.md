@@ -11,7 +11,7 @@ foam2dolfinx is a tool for converting OpenFOAM output files to functions that ca
 ## Installation
 
 ```python
-conda env create -n my-env
+conda create -n my-env
 conda activate my-env
 conda install -c conda-forge fenics-dolfinx=0.9.0 pyvista
 ```
