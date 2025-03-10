@@ -11,7 +11,7 @@ jobs:
     container: dolfinx/dolfinx:${{ matrix.container_version }}
     steps:
         - name: Checkout code
-          uses: actions/checkout@v2
+          uses: actions/checkout@v4
       
         - name: Install local package and dependencies
           run: |
