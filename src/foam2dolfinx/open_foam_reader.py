@@ -129,9 +129,6 @@ class OpenFOAMReader:
     def _create_dolfinx_mesh(self, subdomain: Optional[str] = "default"):
         """Creates a dolfinx.mesh.Mesh based on the elements within the OpenFOAM mesh"""
 
-        if subdomain in self.dolfinx_mesh.keys():
-            return
-
         # Define mesh element and define args conn based on the OF cell type
         if self.cell_type == 12:
             shape = "hexahedron"
@@ -201,7 +198,7 @@ class OpenFOAMReader:
         self._read_with_pyvista(t=t, subdomain=subdomain)
 
         # create the dolfinx mesh
-        if not subdomain in self.dolfinx_mesh:
+        if subdomain not in self.dolfinx_mesh:
             self._create_dolfinx_mesh(subdomain=subdomain)
 
         mesh = self.dolfinx_mesh[subdomain]
