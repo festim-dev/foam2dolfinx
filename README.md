@@ -28,5 +28,6 @@ from foam2dolfinx import OpenFOAMReader
 
 my_reader = OpenFOAMReader(filename="my_file.foam", cell_type=10)
 
-my_dolfinx_func = my_reader.create_dolfinx_function(t=100, name="T")
+my_dolfinx_T_field = my_reader.create_dolfinx_function(t=100, name="T")
+my_dolfinx_U_field = my_reader.create_dolfinx_function(t=100, name="U")
 ```
