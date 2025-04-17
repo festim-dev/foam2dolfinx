@@ -118,13 +118,14 @@ class OpenFOAMReader:
             raise NotImplementedError("Cannot support mixed-topology meshes")
 
         # Raise error if no cells of the specified type are found in the OF_mesh
+        cell_types_in_mesh = [int(k) for k in self.OF_cells_dict[subdomain].keys()]
         if self.OF_cells[subdomain] is None:
             raise ValueError(
                 f"No cell type {self.cell_type} found in the mesh. Found "
-                f"{self.OF_cells_dict[subdomain].keys()}"
+                f"{cell_types_in_mesh}"
             )
 
-    def _create_dolfinx_mesh(self, subdomain):
+    def _create_dolfinx_mesh(self, subdomain: Optional[str] = "default"):
         """Creates a dolfinx.mesh.Mesh based on the elements within the OpenFOAM mesh"""
 
         if subdomain in self.dolfinx_mesh.keys():
@@ -183,7 +184,7 @@ class OpenFOAMReader:
         )
 
     def create_dolfinx_function(
-        self, t: float, name: str = "U", subdomain: Optional[str] = None
+        self, t: float, name: str = "U", subdomain: Optional[str] = "default"
     ) -> dolfinx.fem.Function:
         """Creates a dolfinx.fem.Function from the OpenFOAM file.
 

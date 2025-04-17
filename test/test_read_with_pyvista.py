@@ -20,6 +20,6 @@ def test_error_rasied_when_cells_wanted_are_not_in_file_provided():
 
     with pytest.raises(
         ValueError,
-        match="No 1 cells found in the mesh. Found dict_keys([np.uint8(12)])",
+        match=r"No cell type 1 found in the mesh\. Found \[.*12]",
     ):
         my_reader._read_with_pyvista(t=0)
