@@ -15,3 +15,18 @@ conda create -n my-env
 conda activate my-env
 conda install -c conda-forge fenics-dolfinx=0.9.0 pyvista
 ```
+
+## Example usage
+
+> [!NOTE]  
+> Currently only domains with a unique cell type across the domain are supported. Furthermore, only vtk type cells 10 - tetrahedron and 12 - hexhedron are supported.
+
+Consider a case where you want to read the velocity and temperature fields from a domain with tetrahedron cells at a time of 100s:
+
+```python
+from foam2dolfinx import OpenFOAMReader
+
+my_reader = OpenFOAMReader(filename="my_file.foam", cell_type=10)
+
+my_dolfinx_func = my_reader.create_dolfinx_function(t=100, name="T")
+```
