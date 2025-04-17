@@ -99,8 +99,6 @@ class OpenFOAMReader:
         else:
             self.OF_mesh = OF_multiblock["internalMesh"]
 
-        print(self.OF_mesh)  # Print the number of cells in the mesh
-
         assert hasattr(self.OF_mesh, "cells_dict")  # Ensure the mesh has cell data
         OF_cells_dict = self.OF_mesh.cells_dict  # Get the cell dictionary
 
@@ -120,8 +118,25 @@ class OpenFOAMReader:
     def _create_dolfinx_mesh(self):
         """Creates a dolfinx.mesh.Mesh based on the elements within the OpenFOAM mesh"""
 
+        # Define mesh element and define args conn based on the OF cell type
+
+        if self.cell_type == 12:
+            shape = "hexahedron"
+            args_conn = np.tile(
+                np.array([0, 1, 3, 2, 4, 5, 7, 6]), (len(self.OF_cells), 1)
+            )
+
+        elif self.cell_type == 10:
+            shape = "tetrahedron"
+            args_conn = np.argsort(self.OF_cells, axis=1)  # Sort the cell connectivity
+
+        else:
+            raise ValueError(
+                f"Cell type: {self.cell_type}, not supported, please use"
+                " either 12 (hexahedron) or 10 (tetrahedron) cells in OF mesh"
+            )
+
         # create the connectivity between the OpenFOAM and dolfinx meshes
-        args_conn = np.argsort(self.OF_cells, axis=1)  # Sort the cell connectivity
         rows = np.arange(self.OF_cells.shape[0])[:, None]  # Create row indices
         self.connectivity = self.OF_cells[rows, args_conn]  # Reorder connectivity
 
@@ -171,33 +186,28 @@ class OpenFOAMReader:
         # create the dolfinx mesh
         self._create_dolfinx_mesh()
 
+        mesh = self.dolfinx_mesh
+
         if name == "U":
             element = self.mesh_vector_element
         else:
             element = self.mesh_scalar_element
 
-        self.function_space = dolfinx.fem.functionspace(self.dolfinx_mesh, element)
+        self.function_space = dolfinx.fem.functionspace(mesh, element)
         u = dolfinx.fem.Function(self.function_space)
 
         num_vertices = (
-            self.dolfinx_mesh.topology.index_map(0).size_local
-            + self.dolfinx_mesh.topology.index_map(0).num_ghosts
+            mesh.topology.index_map(0).size_local
+            + mesh.topology.index_map(0).num_ghosts
         )
         vertex_map = np.empty(num_vertices, dtype=np.int32)
 
         # Get cell-to-vertex connectivity
-        c_to_v = self.dolfinx_mesh.topology.connectivity(
-            self.dolfinx_mesh.topology.dim, 0
-        )
-
+        c_to_v = mesh.topology.connectivity(mesh.topology.dim, 0)
         # Map the OF_mesh vertices to dolfinx_mesh vertices
         num_cells = (
-            self.dolfinx_mesh.topology.index_map(
-                self.dolfinx_mesh.topology.dim
-            ).size_local
-            + self.dolfinx_mesh.topology.index_map(
-                self.dolfinx_mesh.topology.dim
-            ).num_ghosts
+            mesh.topology.index_map(mesh.topology.dim).size_local
+            + mesh.topology.index_map(mesh.topology.dim).num_ghosts
         )
         vertices = np.array([c_to_v.links(cell) for cell in range(num_cells)])
         flat_vertices = np.concatenate(vertices)
@@ -205,7 +215,7 @@ class OpenFOAMReader:
         vertex_positions = np.concatenate([np.arange(len(v)) for v in vertices])
 
         vertex_map[flat_vertices] = self.connectivity[
-            self.dolfinx_mesh.topology.original_cell_index
+            mesh.topology.original_cell_index
         ][cell_indices, vertex_positions]
 
         # Assign values in OF_mesh to dolfinx_mesh
