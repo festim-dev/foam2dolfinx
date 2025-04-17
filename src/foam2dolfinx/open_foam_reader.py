@@ -25,6 +25,7 @@ class OpenFOAMReader:
             filename: the filename
             cell_type: cell type id (12 corresponds to HEXAHEDRON)
             reader: pyvista OpenFOAM reader for .foam files
+            multidomain: boolean indicating if the mesh is multi-domain
             OF_mesh: the mesh from the openfoam file
             OF_cells: an array of the cells with associated vertices
             connectivity: The OpenFOAM mesh cell connectivity with vertices reordered
@@ -43,6 +44,7 @@ class OpenFOAMReader:
     cell_type: int
 
     reader: pyvista.POpenFOAMReader
+    multidomain: bool
     OF_mesh: pyvista.pyvista_ndarray | pyvista.DataSet
     OF_cells: np.ndarray
     connectivity: np.ndarray
@@ -55,6 +57,7 @@ class OpenFOAMReader:
         self.cell_type = cell_type
 
         self.reader = pyvista.POpenFOAMReader(self.filename)
+        self.multidomain = False
 
     @property
     def cell_type(self):
@@ -66,21 +69,38 @@ class OpenFOAMReader:
             raise TypeError("cell_type value should be an int")
         self._cell_type = value
 
-    def _read_with_pyvista(self, t: float):
-        """reads the filename dolfinx.fem.Function from the OpenFOAM file.
+    def _read_with_pyvista(self, t: float, subdomain: Optional[str] = None):
+        """reads the openfoam data in the filename provided, passes deatils of the
+        openfoam mesh to OF_mesh and details of the cells to OF_cells.
 
         Args:
             t: timestamp of the data to read
-            name: Name of the field in the openfoam file, defaults to "U" for velocity
+            subdomain: Name of the subdmain in the openfoam file, from which a field is
+                extracted
 
-        Returns:
-            the dolfinx function
         """
         self.reader.set_active_time_value(t)  # Set the time value to read data from
         OF_multiblock = self.reader.read()  # Read the data from the OpenFOAM file
-        self.OF_mesh = OF_multiblock["internalMesh"]  # Extract the internal mesh
 
-        # Dictionary mapping cell type to connectivity
+        # Check if the reader has a multiblock dataset block named "internalMesh"
+        if "internalMesh" not in OF_multiblock.keys():
+            self.multidomain = True
+            if subdomain is None:
+                raise ValueError("Subdomain must be specified for multi-domain meshes")
+            if subdomain not in OF_multiblock.keys():
+                raise ValueError(
+                    f"Subdomain {subdomain} not found in the OpenFOAM file. "
+                    f"Available subdomains: {OF_multiblock.keys()}"
+                )
+
+        # Extract the internal mesh
+        if self.multidomain:
+            self.OF_mesh = OF_multiblock[subdomain]["internalMesh"]
+        else:
+            self.OF_mesh = OF_multiblock["internalMesh"]
+
+        print(self.OF_mesh)  # Print the number of cells in the mesh
+
         assert hasattr(self.OF_mesh, "cells_dict")  # Ensure the mesh has cell data
         OF_cells_dict = self.OF_mesh.cells_dict  # Get the cell dictionary
 
@@ -131,22 +151,25 @@ class OpenFOAMReader:
         )
 
     def create_dolfinx_function(
-        self, t: Optional[float] = None, name: Optional[str] = "U"
+        self, t: float, name: str = "U", subdomain: Optional[str] = None
     ) -> dolfinx.fem.Function:
         """Creates a dolfinx.fem.Function from the OpenFOAM file.
 
         Args:
             t: timestamp of the data to read
             name: Name of the field in the openfoam file, defaults to "U" for velocity
+            subdomain: Name of the subdmain in the openfoam file, from which a field is
+                extracted
 
         Returns:
             the dolfinx function
         """
-        self._read_with_pyvista(t=t)
 
-        # Create dolfinx mesh if it doesn't exist
-        if not hasattr(self, "dolfinx_mesh"):
-            self._create_dolfinx_mesh()
+        # read the openfoam data in the filename provided
+        self._read_with_pyvista(t=t, subdomain=subdomain)
+
+        # create the dolfinx mesh
+        self._create_dolfinx_mesh()
 
         if name == "U":
             element = self.mesh_vector_element
