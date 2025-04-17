@@ -72,7 +72,8 @@ class OpenFOAMReader:
         self._cell_type = value
 
     def _read_with_pyvista(self, t: float, subdomain: Optional[str] = "default"):
-        """reads the openfoam data in the filename provided, passes deatils of the
+        """
+        Reads the openfoam data in the filename provided, passes details of the
         openfoam mesh to OF_mesh and details of the cells to OF_cells.
 
         Args:
@@ -151,12 +152,10 @@ class OpenFOAMReader:
             )
 
         # create the connectivity between the OpenFOAM and dolfinx meshes
-        rows = np.arange(self.OF_cells[subdomain].shape[0])[
-            :, None
-        ]  # Create row indices
-        self.connectivity = self.OF_cells[subdomain][
-            rows, args_conn
-        ]  # Reorder connectivity
+        # Create row indices
+        rows = np.arange(self.OF_cells[subdomain].shape[0])[:, None]
+        # Reorder connectivity
+        self.connectivity = self.OF_cells[subdomain][rows, args_conn]
 
         # Define mesh element
         if self.cell_type == 12:
@@ -202,7 +201,8 @@ class OpenFOAMReader:
         self._read_with_pyvista(t=t, subdomain=subdomain)
 
         # create the dolfinx mesh
-        self._create_dolfinx_mesh(subdomain=subdomain)
+        if not subdomain in self.dolfinx_mesh:
+            self._create_dolfinx_mesh(subdomain=subdomain)
 
         mesh = self.dolfinx_mesh[subdomain]
 
