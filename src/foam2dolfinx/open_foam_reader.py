@@ -60,7 +60,7 @@ class OpenFOAMReader:
         self.reader = pyvista.POpenFOAMReader(self.filename)
         self.multidomain = False
         self.OF_meshes_dict = {}
-        self.OF_cells = {}
+        self.OF_cells_dict = {}
         self.dolfinx_meshes_dict = {}
 
     @property
@@ -119,10 +119,10 @@ class OpenFOAMReader:
         if len(cell_types_in_mesh) > 1:
             raise NotImplementedError("Cannot support mixed-topology meshes")
 
-        self.OF_cells[subdomain] = OF_cell_type_dict.get(self.cell_type)
+        self.OF_cells_dict[subdomain] = OF_cell_type_dict.get(self.cell_type)
 
         # Raise error if no cells of the specified type are found in the OF_mesh
-        if self.OF_cells[subdomain] is None:
+        if self.OF_cells_dict[subdomain] is None:
             raise ValueError(
                 f"No cell type {self.cell_type} found in the mesh. Found "
                 f"{cell_types_in_mesh}"
@@ -135,13 +135,14 @@ class OpenFOAMReader:
         if self.cell_type == 12:
             shape = "hexahedron"
             args_conn = np.tile(
-                np.array([0, 1, 3, 2, 4, 5, 7, 6]), (len(self.OF_cells[subdomain]), 1)
+                np.array([0, 1, 3, 2, 4, 5, 7, 6]),
+                (len(self.OF_cells_dict[subdomain]), 1),
             )
 
         elif self.cell_type == 10:
             shape = "tetrahedron"
             args_conn = np.argsort(
-                self.OF_cells[subdomain], axis=1
+                self.OF_cells_dict[subdomain], axis=1
             )  # Sort the cell connectivity
 
         else:
@@ -152,9 +153,9 @@ class OpenFOAMReader:
 
         # create the connectivity between the OpenFOAM and dolfinx meshes
         # Create row indices
-        rows = np.arange(self.OF_cells[subdomain].shape[0])[:, None]
+        rows = np.arange(self.OF_cells_dict[subdomain].shape[0])[:, None]
         # Reorder connectivity
-        self.connectivity = self.OF_cells[subdomain][rows, args_conn]
+        self.connectivity = self.OF_cells_dict[subdomain][rows, args_conn]
 
         # Define mesh element
         if self.cell_type == 12:
