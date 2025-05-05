@@ -31,8 +31,6 @@ class OpenFOAMReader:
             connectivities_dict: dictionary of the OpenFOAM mesh cell connectivity with
                 vertices reordered in a sorted order for mapping with the dolfinx mesh.
             dolfinx_meshes_dict: dictionary of dolfinx meshes
-            function_spaces_dict: dictionary of function spaces of the dolfinx functions
-                returned in create_dolfinx_function()
 
         Notes:
             The cell type refers to the VTK cell type, a full list of cells and their
@@ -47,11 +45,10 @@ class OpenFOAMReader:
 
     reader: pyvista.POpenFOAMReader
     multidomain: bool
-    OF_mesh: Dict[str, pyvista.pyvista_ndarray | pyvista.DataSet]
-    OF_cells: Dict[str, np.ndarray]
-    connectivity: Dict[str, np.ndarray]
-    dolfinx_mesh: Dict[str, dolfinx.mesh.Mesh]
-    function_space: Dict[str, dolfinx.fem.FunctionSpace]
+    OF_meshes_dict: dict[str, pyvista.pyvista_ndarray | pyvista.DataSet]
+    OF_cells_dict: dict[str, np.ndarray]
+    connectivities_dict: dict[str, np.ndarray]
+    dolfinx_meshes_dict: dict[str, dolfinx.mesh.Mesh]
 
     def __init__(self, filename, cell_type: int = 12):
         self.filename = filename
@@ -61,6 +58,7 @@ class OpenFOAMReader:
         self.multidomain = False
         self.OF_meshes_dict = {}
         self.OF_cells_dict = {}
+        self.connectivities_dict = {}
         self.dolfinx_meshes_dict = {}
 
     @property
@@ -155,7 +153,9 @@ class OpenFOAMReader:
         # Create row indices
         rows = np.arange(self.OF_cells_dict[subdomain].shape[0])[:, None]
         # Reorder connectivity
-        self.connectivity = self.OF_cells_dict[subdomain][rows, args_conn]
+        self.connectivities_dict[subdomain] = self.OF_cells_dict[subdomain][
+            rows, args_conn
+        ]
 
         # Define mesh element
         if self.cell_type == 12:
@@ -180,7 +180,7 @@ class OpenFOAMReader:
         mesh_ufl = ufl.Mesh(self.mesh_vector_element)
         self.dolfinx_meshes_dict[subdomain] = create_mesh(
             MPI.COMM_WORLD,
-            self.connectivity,
+            self.connectivities_dict[subdomain],
             self.OF_meshes_dict[subdomain].points,
             mesh_ufl,
         )
@@ -235,7 +235,7 @@ class OpenFOAMReader:
         cell_indices = np.repeat(np.arange(num_cells), [len(v) for v in vertices])
         vertex_positions = np.concatenate([np.arange(len(v)) for v in vertices])
 
-        vertex_map[flat_vertices] = self.connectivity[
+        vertex_map[flat_vertices] = self.connectivities_dict[subdomain][
             mesh.topology.original_cell_index
         ][cell_indices, vertex_positions]
 
