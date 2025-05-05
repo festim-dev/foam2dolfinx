@@ -88,8 +88,6 @@ class OpenFOAMReader:
         # Check if the reader has a multiblock dataset block named "internalMesh"
         if "internalMesh" not in OF_multiblock.keys():
             self.multidomain = True
-            if subdomain is None:
-                raise ValueError("Subdomain must be specified for multi-domain meshes")
             if subdomain not in OF_multiblock.keys():
                 raise ValueError(
                     f"Subdomain {subdomain} not found in the OpenFOAM file. "
