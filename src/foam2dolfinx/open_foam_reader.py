@@ -6,7 +6,7 @@ import basix
 import dolfinx
 import numpy as np
 import pyvista
-import ufl  # type: ignore
+import ufl
 from dolfinx.mesh import create_mesh
 
 __all__ = ["OpenFOAMReader", "find_closest_value"]
@@ -26,17 +26,20 @@ class OpenFOAMReader:
             cell_type: cell type id (12 corresponds to HEXAHEDRON)
             reader: pyvista OpenFOAM reader for .foam files
             multidomain: boolean indicating if the mesh is multi-domain
-            OF_mesh: the mesh from the openfoam file
-            OF_cells: an array of the cells with associated vertices
-            connectivity: The OpenFOAM mesh cell connectivity with vertices reordered
-                in a sorted order for mapping with the dolfinx mesh.
-            dolfinx_mesh: the dolfinx mesh
-            function_space: the function space of the dolfinx function returned in
-                create_dolfinx_function()
+            OF_meshes_dict: dictionary of meshes from the openfoam file
+            OF_cells_dict: dictionary of arrays of the cells with associated vertices
+            connectivities_dict: dictionary of the OpenFOAM mesh cell connectivity with
+                vertices reordered in a sorted order for mapping with the dolfinx mesh.
+            dolfinx_meshes_dict: dictionary of dolfinx meshes
+            function_spaces_dict: dictionary of function spaces of the dolfinx functions
+                returned in create_dolfinx_function()
 
         Notes:
             The cell type refers to the VTK cell type, a full list of cells and their
             respective integers can be found at: https://vtk.org/doc/nightly/html/vtkCellType_8h_source.html
+
+            If only one mesh is present in the OpenFOAM file, all data will be under the
+            key: "default"
     """
 
     filename: str
@@ -56,10 +59,9 @@ class OpenFOAMReader:
 
         self.reader = pyvista.POpenFOAMReader(self.filename)
         self.multidomain = False
-        self.OF_mesh = {}
-        self.OF_cells_dict = {}
+        self.OF_meshes_dict = {}
         self.OF_cells = {}
-        self.dolfinx_mesh = {}
+        self.dolfinx_meshes_dict = {}
 
     @property
     def cell_type(self):
@@ -99,27 +101,27 @@ class OpenFOAMReader:
         # Extract the internal mesh
         if self.multidomain:
             for cell_array_name in OF_multiblock.keys():
-                self.OF_mesh[cell_array_name] = OF_multiblock[cell_array_name][
+                self.OF_meshes_dict[cell_array_name] = OF_multiblock[cell_array_name][
                     "internalMesh"
                 ]
         else:
-            self.OF_mesh[subdomain] = OF_multiblock["internalMesh"]
+            self.OF_meshes_dict[subdomain] = OF_multiblock["internalMesh"]
 
-        assert hasattr(
-            self.OF_mesh[subdomain], "cells_dict"
-        )  # Ensure the mesh has cell data
-        self.OF_cells_dict[subdomain] = self.OF_mesh[
-            subdomain
-        ].cells_dict  # Get the cell dictionary
+        # Ensure the mesh has cell data
+        assert hasattr(self.OF_meshes_dict[subdomain], "cells_dict")
 
-        self.OF_cells[subdomain] = self.OF_cells_dict[subdomain].get(self.cell_type)
+        # obtain dictionary of cell types in OF_mesh
+        OF_cell_type_dict = self.OF_meshes_dict[subdomain].cells_dict
+
+        cell_types_in_mesh = [int(k) for k in OF_cell_type_dict.keys()]
 
         # Raise error if OF_mesh is mixed topology
-        if len(self.OF_cells_dict[subdomain].keys()) > 1:
+        if len(cell_types_in_mesh) > 1:
             raise NotImplementedError("Cannot support mixed-topology meshes")
 
+        self.OF_cells[subdomain] = OF_cell_type_dict.get(self.cell_type)
+
         # Raise error if no cells of the specified type are found in the OF_mesh
-        cell_types_in_mesh = [int(k) for k in self.OF_cells_dict[subdomain].keys()]
         if self.OF_cells[subdomain] is None:
             raise ValueError(
                 f"No cell type {self.cell_type} found in the mesh. Found "
@@ -175,8 +177,11 @@ class OpenFOAMReader:
 
         # Create dolfinx Mesh
         mesh_ufl = ufl.Mesh(self.mesh_vector_element)
-        self.dolfinx_mesh[subdomain] = create_mesh(
-            MPI.COMM_WORLD, self.connectivity, self.OF_mesh[subdomain].points, mesh_ufl
+        self.dolfinx_meshes_dict[subdomain] = create_mesh(
+            MPI.COMM_WORLD,
+            self.connectivity,
+            self.OF_meshes_dict[subdomain].points,
+            mesh_ufl,
         )
 
     def create_dolfinx_function(
@@ -198,10 +203,10 @@ class OpenFOAMReader:
         self._read_with_pyvista(t=t, subdomain=subdomain)
 
         # create the dolfinx mesh
-        if subdomain not in self.dolfinx_mesh:
+        if subdomain not in self.dolfinx_meshes_dict:
             self._create_dolfinx_mesh(subdomain=subdomain)
 
-        mesh = self.dolfinx_mesh[subdomain]
+        mesh = self.dolfinx_meshes_dict[subdomain]
 
         if name == "U":
             element = self.mesh_vector_element
@@ -234,8 +239,10 @@ class OpenFOAMReader:
         ][cell_indices, vertex_positions]
 
         # Assign values in OF_mesh to dolfinx_mesh
-        assert hasattr(self.OF_mesh[subdomain], "point_data")
-        u.x.array[:] = self.OF_mesh[subdomain].point_data[name][vertex_map].flatten()
+        assert hasattr(self.OF_meshes_dict[subdomain], "point_data")
+        u.x.array[:] = (
+            self.OF_meshes_dict[subdomain].point_data[name][vertex_map].flatten()
+        )
 
         return u
 
