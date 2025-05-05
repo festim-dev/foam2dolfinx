@@ -1,4 +1,4 @@
-from typing import Optional, Dict
+from typing import Optional
 
 from mpi4py import MPI
 
