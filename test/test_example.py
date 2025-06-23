@@ -33,3 +33,28 @@ def test_baby_example(tmpdir):
 
     assert isinstance(vel, dolfinx.fem.Function)
     assert isinstance(T, dolfinx.fem.Function)
+
+
+def test_hot_room(tmpdir):
+    time = 2000.0
+
+    zip_path = Path("test/data/hotRoom.zip")
+    extract_path = Path(tmpdir) / "hotRoom"
+
+    # Unzip the file
+    with zipfile.ZipFile(zip_path, "r") as zip_ref:
+        zip_ref.extractall(extract_path)
+
+    # Construct the path to the .foam file
+    foam_file = extract_path / "hotRoom/hotRoom.foam"
+
+    # read the .foam file
+    my_of_reader = OpenFOAMReader(filename=str(foam_file), cell_type=12)
+
+    vel = my_of_reader.create_dolfinx_function(t=time, name="U")
+    T = my_of_reader.create_dolfinx_function(t=time, name="T")
+    nut = my_of_reader.create_dolfinx_function(t=time, name="nut")
+
+    assert isinstance(vel, dolfinx.fem.Function)
+    assert isinstance(T, dolfinx.fem.Function)
+    assert isinstance(nut, dolfinx.fem.Function)
