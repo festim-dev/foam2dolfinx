@@ -175,3 +175,5 @@ cython_debug/
 *_version.py
 
 *Zone.Identifier
+
+data/
