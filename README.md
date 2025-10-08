@@ -13,11 +13,11 @@ foam2dolfinx is a tool for converting OpenFOAM output files to functions that ca
 ```bash
 conda create -n foam2dolfinx-env
 conda activate foam2dolfinx-env
-conda install -c conda-forge fenics-dolfinx=0.9.0 pyvista
+conda install -c conda-forge fenics-dolfinx=0.9.0 mpich pyvista
 ```
 Once in the created in environment:
 ```bash
-pip install git+https://github.com/festim-dev/foam2dolfinx
+python -m pip install foam2dolfinx
 ```
 
 # Example usage
@@ -61,7 +61,7 @@ T = my_of_reader.create_dolfinx_function(t=1.0, name="T")
 from foam2dolfinx import OpenFOAMReader
 
 # instantiate reader:
-my_reader =OpenFOAMReader(filename="my_local_file.foam")
+my_reader = OpenFOAMReader(filename="my_local_file.foam")
 
 # read velocity and temperature fields at t=1s
 vel1 = my_of_reader.create_dolfinx_function(t=3.0, name="U", subdomain="sub1")
