@@ -178,10 +178,10 @@ class OpenFOAMReader:
         # Create dolfinx Mesh
         mesh_ufl = ufl.Mesh(self.mesh_vector_element)
         self.dolfinx_meshes_dict[subdomain] = create_mesh(
-            MPI.COMM_WORLD,
-            self.connectivities_dict[subdomain],
-            self.OF_meshes_dict[subdomain].points,
-            mesh_ufl,
+            comm=MPI.COMM_WORLD,
+            cells=self.connectivities_dict[subdomain],
+            x=self.OF_meshes_dict[subdomain].points,
+            e=mesh_ufl,
         )
 
     def create_dolfinx_function(
