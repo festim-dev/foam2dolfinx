@@ -176,7 +176,9 @@ class OpenFOAMReader:
         )
 
         # Create dolfinx Mesh
-        mesh_ufl = ufl.Mesh(self.mesh_vector_element)
+        mesh_ufl = ufl.Mesh(
+            basix.ufl.element("Lagrange", cell.cellname(), degree, shape=(3,))
+        )
         self.dolfinx_meshes_dict[subdomain] = create_mesh(
             comm=MPI.COMM_WORLD,
             cells=self.connectivities_dict[subdomain],
@@ -184,7 +186,7 @@ class OpenFOAMReader:
             e=mesh_ufl,
         )
 
-    def create_dolfinx_function(
+    def create_dolfinx_function_with_cell_data(
         self, t: float, name: str = "U", subdomain: str | None = "default"
     ) -> dolfinx.fem.Function:
         """Creates a dolfinx.fem.Function from the OpenFOAM file.
@@ -198,6 +200,50 @@ class OpenFOAMReader:
         Returns:
             the dolfinx function
         """
+
+        # read the OpenFOAM data in the filename provided
+        self._read_with_pyvista(t=t, subdomain=subdomain)
+
+        # create the dolfinx mesh
+        if subdomain not in self.dolfinx_meshes_dict:
+            self._create_dolfinx_mesh(subdomain=subdomain)
+
+        mesh = self.dolfinx_meshes_dict[subdomain]
+
+        if name == "U":
+            element = basix.ufl.element("DG", mesh.topology.cell_name(), 0, shape=(3,))
+        else:
+            element = basix.ufl.element("DG", mesh.topology.cell_name(), 0, shape=())
+
+        function_space = dolfinx.fem.functionspace(mesh, element)
+        u = dolfinx.fem.Function(function_space)
+
+        # Assign values in OF_mesh to dolfinx_mesh
+        assert hasattr(self.OF_meshes_dict[subdomain], "cell_data")
+        u.x.array[:] = (
+            self.OF_meshes_dict[subdomain]
+            .cell_data[name][mesh.topology.original_cell_index]
+            .flatten()
+        )
+
+        return u
+
+    def create_dolfinx_function_with_point_data(
+        self, t: float, name: str = "U", subdomain: str | None = "default"
+    ) -> dolfinx.fem.Function:
+        """Creates a dolfinx.fem.Function from the OpenFOAM file.
+
+        Args:
+            t: timestamp of the data to read
+            name: Name of the field in the OpenFOAM file, defaults to "U" for velocity
+            subdomain: Name of the subdmain in the OpenFOAM file, from which a field is
+                extracted
+
+        Returns:
+            the dolfinx function
+        """
+
+        assert hasattr(self.OF_meshes_dict[subdomain], "point_data")
 
         # read the OpenFOAM data in the filename provided
         self._read_with_pyvista(t=t, subdomain=subdomain)
@@ -239,7 +285,6 @@ class OpenFOAMReader:
         ][cell_indices, vertex_positions]
 
         # Assign values in OF_mesh to dolfinx_mesh
-        assert hasattr(self.OF_meshes_dict[subdomain], "point_data")
         u.x.array[:] = (
             self.OF_meshes_dict[subdomain].point_data[name][vertex_map].flatten()
         )
