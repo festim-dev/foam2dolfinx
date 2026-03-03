@@ -1,13 +1,15 @@
-from foam2dolfinx import OpenFOAMReader
-import dolfinx
-from pyvista import examples
 import zipfile
 from pathlib import Path
+
+import dolfinx
+from pyvista import examples
+
+from foam2dolfinx import OpenFOAMReader
 
 
 def test_reading_and_writing_cavity_example():
     my_of_reader = OpenFOAMReader(filename=examples.download_cavity(load=False))
-    vel = my_of_reader.create_dolfinx_function(t=2.5)
+    vel = my_of_reader.create_dolfinx_function_with_point_data(t=2.5)
 
     assert isinstance(vel, dolfinx.fem.Function)
 
@@ -28,8 +30,8 @@ def test_baby_example(tmpdir):
     # read the .foam file
     my_of_reader = OpenFOAMReader(filename=str(foam_file), cell_type=10)
 
-    vel = my_of_reader.create_dolfinx_function(t=time, name="U")
-    T = my_of_reader.create_dolfinx_function(t=time, name="T")
+    vel = my_of_reader.create_dolfinx_function_with_point_data(t=time, name="U")
+    T = my_of_reader.create_dolfinx_function_with_point_data(t=time, name="T")
 
     assert isinstance(vel, dolfinx.fem.Function)
     assert isinstance(T, dolfinx.fem.Function)
@@ -51,9 +53,9 @@ def test_hot_room(tmpdir):
     # read the .foam file
     my_of_reader = OpenFOAMReader(filename=str(foam_file), cell_type=12)
 
-    vel = my_of_reader.create_dolfinx_function(t=time, name="U")
-    T = my_of_reader.create_dolfinx_function(t=time, name="T")
-    nut = my_of_reader.create_dolfinx_function(t=time, name="nut")
+    vel = my_of_reader.create_dolfinx_function_with_point_data(t=time, name="U")
+    T = my_of_reader.create_dolfinx_function_with_point_data(t=time, name="T")
+    nut = my_of_reader.create_dolfinx_function_with_point_data(t=time, name="nut")
 
     assert isinstance(vel, dolfinx.fem.Function)
     assert isinstance(T, dolfinx.fem.Function)
