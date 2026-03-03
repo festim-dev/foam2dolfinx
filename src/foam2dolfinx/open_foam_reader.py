@@ -243,8 +243,6 @@ class OpenFOAMReader:
             the dolfinx function
         """
 
-        assert hasattr(self.OF_meshes_dict[subdomain], "point_data")
-
         # read the OpenFOAM data in the filename provided
         self._read_with_pyvista(t=t, subdomain=subdomain)
 
@@ -285,6 +283,7 @@ class OpenFOAMReader:
         ][cell_indices, vertex_positions]
 
         # Assign values in OF_mesh to dolfinx_mesh
+        assert hasattr(self.OF_meshes_dict[subdomain], "point_data")
         u.x.array[:] = (
             self.OF_meshes_dict[subdomain].point_data[name][vertex_map].flatten()
         )
