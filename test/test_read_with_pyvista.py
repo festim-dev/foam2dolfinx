@@ -44,7 +44,10 @@ def test_error_rasied_when_subdomain_is_not_given_in_multidomain_case(tmpdir):
 
     with pytest.raises(
         ValueError,
-        match="Subdomain None not found in the OpenFOAM file\. Available subdomains: \['defaultRegion', 'fluid', 'solid']",
+        match=(
+            r"Subdomain None not found in the OpenFOAM file\. "
+            r"Available subdomains: \['defaultRegion', 'fluid', 'solid']"
+        ),
     ):
         my_of_reader._read_with_pyvista(t=20.0, subdomain=None)
 

@@ -8,4 +8,4 @@ except Exception:
 
 from .open_foam_reader import OpenFOAMReader, find_closest_value
 
-__all__ = ["OpenFOAMReader, find_closest_value"]
+__all__ = ["OpenFOAMReader", "find_closest_value"]
