@@ -310,6 +310,11 @@ class OpenFOAMReader:
         Returns:
             the dolfinx MeshTags for the facets of the mesh
         """
+        if self.multidomain is True:
+            raise NotImplementedError(
+                "Facet meshtags cannot be created for multidomain meshes, as the "
+                "boundary patches are not currently supported for multidomain meshes."
+            )
         mesh = self._get_mesh(t, name, subdomain)
 
         boundary = self.OF_multiblock["boundary"]
@@ -351,6 +356,35 @@ class OpenFOAMReader:
             np.concatenate(all_facets),
             np.concatenate(all_tags),
         )
+
+    def create_cell_meshtags(
+        self, t: float = 0, name: str = "U", subdomain: str | None = "default"
+    ):
+        """Creates a dolfinx.mesh.MeshTags for the cells of the mesh based on the
+        cell data in the OpenFOAM file.
+
+        Args:
+            t: timestamp of the data to read, default to 0.
+            name: Name of the field in the OpenFOAM file, defaults to "U" for velocity
+            subdomain: Name of the subdmain in the OpenFOAM file, from which a field is
+                extracted
+
+        Returns:
+            the dolfinx MeshTags for the cells of the mesh
+        """
+        if self.multidomain is True:
+            raise NotImplementedError(
+                "Facet meshtags cannot be created for multidomain meshes, as the "
+                "boundary patches are not currently supported for multidomain meshes."
+            )
+
+        mesh = self._get_mesh(t, name, subdomain)
+
+        num_cells = mesh.topology.index_map(mesh.topology.dim).size_local
+        mesh_cell_indices = np.arange(num_cells, dtype=np.int32)
+        tags_volumes = np.full(num_cells, 1, dtype=np.int32)
+
+        return meshtags(mesh, mesh.topology.dim, mesh_cell_indices, tags_volumes)
 
 
 def find_closest_value(values: list[float], target: float) -> float:
