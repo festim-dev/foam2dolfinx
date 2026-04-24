@@ -1,7 +1,11 @@
 # foam2dolfinx
 
-[![CI](https://github.com/festim-dev/FESTIM/actions/workflows/ci.yml/badge.svg)](https://github.com/festim-dev/FESTIM/actions/workflows/ci.yml)
+[![NumFOCUS](https://img.shields.io/badge/powered%20by-NumFOCUS-orange.svg?style=flat&colorA=E1523D&colorB=007D8A)](https://numfocus.org/)
+[![Conda CI](https://github.com/festim-dev/foam2dolfinx/actions/workflows/ci_conda.yml/badge.svg?branch=main)](https://github.com/festim-dev/foam2dolfinx/actions/workflows/ci_conda.yml)
+[![Docker CI](https://github.com/festim-dev/foam2dolfinx/actions/workflows/ci_docker.yml/badge.svg?branch=main)](https://github.com/festim-dev/foam2dolfinx/actions/workflows/ci_docker.yml)
+[![codecov](https://codecov.io/gh/festim-dev/foam2dolfinx/branch/main/graph/badge.svg?token=AK3A9CV2D3)](https://codecov.io/gh/festim-dev/foam2dolfinx)
 [![Code style: Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
+[![DOI](https://zenodo.org/badge/944519483.svg)](https://doi.org/10.5281/zenodo.17297276)
 
 foam2dolfinx is a tool for converting OpenFOAM output files to functions that can be used within [dolfinx](https://github.com/FEniCS/dolfinx).
 
