@@ -178,38 +178,47 @@ class OpenFOAMReader:
                     f"Found {cell_types}"
                 )
 
-    def _create_dolfinx_mesh(self, subdomain: str | None = "default"):
-        """Creates a dolfinx.mesh.Mesh based on the elements within the OpenFOAM mesh"""
+    def _get_connectivity(self, cells: np.ndarray) -> tuple[str, np.ndarray]:
+        """Reorders a raw VTK cell array into DOLFINx vertex ordering.
 
-        # Define mesh element and define args conn based on the OF cell type
+        Args:
+            cells: 2D array of shape (n_cells, n_verts) from PyVista cells_dict
+
+        Returns:
+            (shape_name, reordered_connectivity) where shape_name is the UFL
+            cell name ("hexahedron" or "tetrahedron")
+        """
         if self.cell_type == 12:
             shape = "hexahedron"
-            args_conn = np.tile(
-                np.array([0, 1, 3, 2, 4, 5, 7, 6]),
-                (len(self.OF_cells_dict[subdomain]), 1),
-            )
-
+            args_conn = np.tile(np.array([0, 1, 3, 2, 4, 5, 7, 6]), (len(cells), 1))
         elif self.cell_type == 10:
             shape = "tetrahedron"
-            args_conn = np.argsort(
-                self.OF_cells_dict[subdomain], axis=1
-            )  # Sort the cell connectivity
-
+            args_conn = np.argsort(cells, axis=1)
         else:
             raise ValueError(
                 f"Cell type: {self.cell_type}, not supported, please use"
                 " either 12 (hexahedron) or 10 (tetrahedron) cells in OF mesh"
             )
+        rows = np.arange(cells.shape[0])[:, None]
+        return shape, cells[rows, args_conn]
 
-        # create the connectivity between the OpenFOAM and dolfinx meshes
-        # Create row indices
-        rows = np.arange(self.OF_cells_dict[subdomain].shape[0])[:, None]
-        # Reorder connectivity
-        self.connectivities_dict[subdomain] = self.OF_cells_dict[subdomain][
-            rows, args_conn
-        ]
+    def _build_dolfinx_mesh(
+        self, points: np.ndarray, connectivity: np.ndarray, shape: str
+    ) -> dolfinx.mesh.Mesh:
+        """Creates a dolfinx mesh from points and pre-reordered connectivity.
 
-        degree = 1  # Set polynomial degree
+        Also sets mesh_vector_element and mesh_scalar_element on the instance.
+
+        Args:
+            points: (n_points, 3) coordinate array
+            connectivity: (n_cells, n_verts) reordered connectivity from
+                _get_connectivity
+            shape: UFL cell name, e.g. "hexahedron" or "tetrahedron"
+
+        Returns:
+            the new dolfinx.mesh.Mesh
+        """
+        degree = 1
         cell = ufl.Cell(shape)
         # ufl.Cell.cellname became a property after dolfinx v0.10
         cell_name = cell.cellname() if callable(cell.cellname) else cell.cellname
@@ -219,26 +228,27 @@ class OpenFOAMReader:
         self.mesh_scalar_element = basix.ufl.element(
             "Lagrange", cell_name, degree, shape=()
         )
-
-        # Create dolfinx Mesh
         mesh_ufl = ufl.Mesh(
             basix.ufl.element("Lagrange", cell_name, degree, shape=(3,))
         )
-        self.dolfinx_meshes_dict[subdomain] = create_mesh(
-            comm=MPI.COMM_WORLD,
-            cells=self.connectivities_dict[subdomain],
-            x=self.OF_meshes_dict[subdomain].points,
-            e=mesh_ufl,
+        return create_mesh(
+            comm=MPI.COMM_WORLD, cells=connectivity, x=points, e=mesh_ufl
+        )
+
+    def _create_dolfinx_mesh(self, subdomain: str | None = "default"):
+        """Creates a dolfinx.mesh.Mesh based on the elements within the OpenFOAM mesh"""
+        shape, connectivity = self._get_connectivity(self.OF_cells_dict[subdomain])
+        self.connectivities_dict[subdomain] = connectivity
+        self.dolfinx_meshes_dict[subdomain] = self._build_dolfinx_mesh(
+            self.OF_meshes_dict[subdomain].points, connectivity, shape
         )
 
     def _create_global_dolfinx_mesh(self):
         """Merges all subdomain pyvista meshes into a single global dolfinx mesh.
 
-        Reads cell data for any subdomains not yet in OF_cells_dict, records
-        cumulative cell offsets in subdomain_cell_offsets (used later for cell
-        and interface facet meshtags), merges all pyvista meshes with clean()
-        to deduplicate shared interface points, and creates a single dolfinx
-        mesh stored under the key "_global" in dolfinx_meshes_dict.
+        Merges all pyvista meshes with clean() to deduplicate shared interface
+        points, embeds subdomain IDs as cell data so they survive any reordering,
+        and creates a single dolfinx mesh stored under the key "_global".
         """
         subdomain_names = list(self.OF_meshes_dict.keys())
 
@@ -274,47 +284,14 @@ class OpenFOAMReader:
             )
             tagged_meshes.append(pv_mesh)
 
-        # Merge all pyvista meshes; clean() deduplicates coincident interface points
         merged = pyvista.merge(tagged_meshes).clean()
         self._pv_cell_subdomain_ids = merged.cell_data["subdomain_id"]
 
         OF_cells = merged.cells_dict.get(self.cell_type)
-
-        if self.cell_type == 12:
-            shape = "hexahedron"
-            args_conn = np.tile(np.array([0, 1, 3, 2, 4, 5, 7, 6]), (len(OF_cells), 1))
-        elif self.cell_type == 10:
-            shape = "tetrahedron"
-            args_conn = np.argsort(OF_cells, axis=1)
-        else:
-            raise ValueError(
-                f"Cell type: {self.cell_type}, not supported, please use"
-                " either 12 (hexahedron) or 10 (tetrahedron) cells in OF mesh"
-            )
-
-        rows = np.arange(OF_cells.shape[0])[:, None]
-        connectivity = OF_cells[rows, args_conn]
+        shape, connectivity = self._get_connectivity(OF_cells)
         self.connectivities_dict["_global"] = connectivity
-
-        degree = 1
-        cell = ufl.Cell(shape)
-        # ufl.Cell.cellname became a property after dolfinx v0.10
-        cell_name = cell.cellname() if callable(cell.cellname) else cell.cellname
-        self.mesh_vector_element = basix.ufl.element(
-            "Lagrange", cell_name, degree, shape=(3,)
-        )
-        self.mesh_scalar_element = basix.ufl.element(
-            "Lagrange", cell_name, degree, shape=()
-        )
-
-        mesh_ufl = ufl.Mesh(
-            basix.ufl.element("Lagrange", cell_name, degree, shape=(3,))
-        )
-        self.dolfinx_meshes_dict["_global"] = create_mesh(
-            comm=MPI.COMM_WORLD,
-            cells=connectivity,
-            x=merged.points,
-            e=mesh_ufl,
+        self.dolfinx_meshes_dict["_global"] = self._build_dolfinx_mesh(
+            merged.points, connectivity, shape
         )
 
     def _get_mesh(
