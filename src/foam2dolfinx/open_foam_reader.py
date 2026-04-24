@@ -77,6 +77,7 @@ class OpenFOAMReader:
         self.dolfinx_meshes_dict = {}
         self.vertex_maps_dict = {}
         self.subdomain_cell_offsets = {}
+        self._pv_cell_subdomain_ids = None
 
     @property
     def cell_type(self):
@@ -105,15 +106,20 @@ class OpenFOAMReader:
         # Check if the reader has a multiblock dataset block named "internalMesh"
         if "internalMesh" not in self.OF_multiblock.keys():
             self.multidomain = True
-            if subdomain not in self.OF_multiblock.keys():
+            named_subdomains = [
+                k for k in self.OF_multiblock.keys() if k != "defaultRegion"
+            ]
+            if subdomain not in named_subdomains:
                 raise ValueError(
                     f"Subdomain {subdomain} not found in the OpenFOAM file. "
-                    f"Available subdomains: {self.OF_multiblock.keys()}"
+                    f"Available subdomains: {named_subdomains}"
                 )
 
         # Extract the internal mesh
         if self.multidomain:
             for cell_array_name in self.OF_multiblock.keys():
+                if cell_array_name == "defaultRegion":
+                    continue
                 self.OF_meshes_dict[cell_array_name] = self.OF_multiblock[
                     cell_array_name
                 ]["internalMesh"]
@@ -155,6 +161,8 @@ class OpenFOAMReader:
         if "internalMesh" not in self.OF_multiblock.keys():
             self.multidomain = True
             for name in self.OF_multiblock.keys():
+                if name == "defaultRegion":
+                    continue
                 self.OF_meshes_dict[name] = self.OF_multiblock[name]["internalMesh"]
         else:
             self.multidomain = False
@@ -249,17 +257,26 @@ class OpenFOAMReader:
                     )
                 self.OF_cells_dict[name] = cells
 
-        # Record cumulative cell offsets before merging (cell order is preserved)
+        # Record cumulative cell offsets (used for print summaries only)
         cumulative = 0
         for name in subdomain_names:
             count = len(self.OF_cells_dict[name])
             self.subdomain_cell_offsets[name] = (cumulative, cumulative + count)
             cumulative += count
 
+        # Embed subdomain IDs as cell data before merging so the tag survives
+        # merge+clean regardless of any cell reordering the operation applies
+        tagged_meshes = []
+        for j, name in enumerate(subdomain_names):
+            pv_mesh = self.OF_meshes_dict[name].copy()
+            pv_mesh.cell_data["subdomain_id"] = np.full(
+                pv_mesh.n_cells, j + 1, dtype=np.int32
+            )
+            tagged_meshes.append(pv_mesh)
+
         # Merge all pyvista meshes; clean() deduplicates coincident interface points
-        merged = pyvista.merge(
-            [self.OF_meshes_dict[name] for name in subdomain_names]
-        ).clean()
+        merged = pyvista.merge(tagged_meshes).clean()
+        self._pv_cell_subdomain_ids = merged.cell_data["subdomain_id"]
 
         OF_cells = merged.cells_dict.get(self.cell_type)
 
@@ -483,15 +500,11 @@ class OpenFOAMReader:
         next_tag = len(patches) + 1
 
         if self.multidomain:
-            # Build cell subdomain tag array in dolfinx ordering
-            total_pv_cells = sum(e for _, e in self.subdomain_cell_offsets.values())
-            pv_cell_tags = np.zeros(total_pv_cells, dtype=np.int32)
-            for j, (sd_name, (start, end)) in enumerate(
-                self.subdomain_cell_offsets.items()
-            ):
-                pv_cell_tags[start:end] = j + 1
+            # Map subdomain IDs to dolfinx cell ordering via original_cell_index.
+            # _pv_cell_subdomain_ids is indexed by the merged pyvista cell index,
+            # which original_cell_index maps back to for each dolfinx cell.
             num_cells = mesh.topology.index_map(mesh.topology.dim).size_local
-            dolfinx_cell_tags = pv_cell_tags[
+            dolfinx_cell_tags = self._pv_cell_subdomain_ids[
                 mesh.topology.original_cell_index[:num_cells]
             ]
 
@@ -564,18 +577,24 @@ class OpenFOAMReader:
                 self._create_global_dolfinx_mesh()
             mesh = self.dolfinx_meshes_dict["_global"]
 
-            total_pv_cells = sum(e for _, e in self.subdomain_cell_offsets.values())
-            pv_cell_tags = np.zeros(total_pv_cells, dtype=np.int32)
-            for j, (_, (start, end)) in enumerate(self.subdomain_cell_offsets.items()):
-                pv_cell_tags[start:end] = j + 1
             num_cells = mesh.topology.index_map(mesh.topology.dim).size_local
-            cell_tag_array = pv_cell_tags[mesh.topology.original_cell_index[:num_cells]]
+            cell_tag_array = self._pv_cell_subdomain_ids[
+                mesh.topology.original_cell_index[:num_cells]
+            ]
+
+            print("Cell zone summary:")
+            for j, sd_name in enumerate(self.subdomain_cell_offsets.keys()):
+                n_cells = int(np.sum(cell_tag_array == j + 1))
+                print(f"  {sd_name}: id={j + 1}, n_cells={n_cells}")
         else:
             if "default" not in self.dolfinx_meshes_dict:
                 self._create_dolfinx_mesh(subdomain="default")
             mesh = self.dolfinx_meshes_dict["default"]
             num_cells = mesh.topology.index_map(mesh.topology.dim).size_local
             cell_tag_array = np.ones(num_cells, dtype=np.int32)
+
+            print("Cell zone summary:")
+            print(f"  default: id=1, n_cells={num_cells}")
 
         cell_indices = np.arange(num_cells, dtype=np.int32)
         return meshtags(mesh, mesh.topology.dim, cell_indices, cell_tag_array)
