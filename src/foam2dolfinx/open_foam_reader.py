@@ -193,6 +193,21 @@ class OpenFOAMReader:
             comm=MPI.COMM_WORLD, cells=connectivity, x=points, e=mesh_ufl
         )
 
+    def _ensure_mesh(self) -> dolfinx.mesh.Mesh:
+        """Returns the active dolfinx mesh, creating it on first call.
+
+        For multidomain cases returns the merged global mesh; for single-domain
+        returns the default mesh.
+        """
+        if self.multidomain:
+            if "_global" not in self.dolfinx_meshes_dict:
+                self._create_global_dolfinx_mesh()
+            return self.dolfinx_meshes_dict["_global"]
+        else:
+            if "default" not in self.dolfinx_meshes_dict:
+                self._create_dolfinx_mesh(subdomain="default")
+            return self.dolfinx_meshes_dict["default"]
+
     def _create_dolfinx_mesh(self, subdomain: str | None = "default"):
         """Creates a dolfinx.mesh.Mesh based on the elements within the OpenFOAM mesh"""
         shape, connectivity = self._get_connectivity(self.OF_cells_dict[subdomain])
@@ -378,14 +393,7 @@ class OpenFOAMReader:
         t = t if t is not None else next(tv for tv in self.times if tv != 0)
         self._read_with_pyvista(t=t)
 
-        if self.multidomain:
-            if "_global" not in self.dolfinx_meshes_dict:
-                self._create_global_dolfinx_mesh()
-            mesh = self.dolfinx_meshes_dict["_global"]
-        else:
-            if "default" not in self.dolfinx_meshes_dict:
-                self._create_dolfinx_mesh(subdomain="default")
-            mesh = self.dolfinx_meshes_dict["default"]
+        mesh = self._ensure_mesh()
 
         # Collect boundary patches — in multidomain files each subdomain block
         # holds its own "boundary" child; single-domain has one top-level "boundary"
