@@ -223,18 +223,16 @@ class OpenFOAMReader:
         """
         mesh = self._get_mesh(t, name, subdomain)
 
-        if name == "U":
-            element = basix.ufl.element("DG", mesh.topology.cell_name(), 0, shape=(3,))
-        else:
-            element = basix.ufl.element("DG", mesh.topology.cell_name(), 0, shape=())
+        data = self.OF_meshes_dict[subdomain].cell_data[name]
+        # () for scalars, (3,) for vectors
+        data_shape = data.shape[1:] if data.ndim > 1 else ()
+        element = basix.ufl.element(
+            "DG", mesh.topology.cell_name(), 0, shape=data_shape
+        )
 
         function_space = dolfinx.fem.functionspace(mesh, element)
         u = dolfinx.fem.Function(function_space)
-        u.x.array[:] = (
-            self.OF_meshes_dict[subdomain]
-            .cell_data[name][mesh.topology.original_cell_index]
-            .flatten()
-        )
+        u.x.array[:] = data[mesh.topology.original_cell_index].flatten()
 
         return u
 
@@ -254,10 +252,11 @@ class OpenFOAMReader:
         """
         mesh = self._get_mesh(t, name, subdomain)
 
-        if name == "U":
-            element = self.mesh_vector_element
-        else:
-            element = self.mesh_scalar_element
+        # select scalar or vector element based on data dimensionality
+        data = self.OF_meshes_dict[subdomain].point_data[name]
+        element = (
+            self.mesh_vector_element if data.ndim > 1 else self.mesh_scalar_element
+        )
 
         function_space = dolfinx.fem.functionspace(mesh, element)
         u = dolfinx.fem.Function(function_space)
