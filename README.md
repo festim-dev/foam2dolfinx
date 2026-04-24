@@ -1,87 +1,98 @@
 # foam2dolfinx
 
-[![CI](https://github.com/festim-dev/FESTIM/actions/workflows/ci.yml/badge.svg)](https://github.com/festim-dev/FESTIM/actions/workflows/ci.yml)
+[![NumFOCUS](https://img.shields.io/badge/powered%20by-NumFOCUS-orange.svg?style=flat&colorA=E1523D&colorB=007D8A)](https://numfocus.org/)
+[![Conda CI](https://github.com/festim-dev/foam2dolfinx/actions/workflows/ci_conda.yml/badge.svg?branch=main)](https://github.com/festim-dev/foam2dolfinx/actions/workflows/ci_conda.yml)
+[![Docker CI](https://github.com/festim-dev/foam2dolfinx/actions/workflows/ci_docker.yml/badge.svg?branch=main)](https://github.com/festim-dev/foam2dolfinx/actions/workflows/ci_docker.yml)
+[![codecov](https://codecov.io/gh/festim-dev/foam2dolfinx/branch/main/graph/badge.svg?token=AK3A9CV2D3)](https://codecov.io/gh/festim-dev/foam2dolfinx)
 [![Code style: Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
+[![DOI](https://zenodo.org/badge/944519483.svg)](https://doi.org/10.5281/zenodo.17297276)
 
-foam2dolfinx is a tool for converting OpenFOAM output files to functions that can be used within [dolfinx](https://github.com/FEniCS/dolfinx).
+foam2dolfinx converts OpenFOAM output files into dolfinx meshes, meshtags, and functions for use in [DOLFINx](https://github.com/FEniCS/dolfinx)-based finite element workflows.
 
-> [!NOTE]  
-> This small package was inspired by Stefano Riva's [ROSE-pyforce](https://github.com/ERMETE-Lab/ROSE-pyforce) repository.
+> [!NOTE]
+> This package was inspired by Stefano Riva's [ROSE-pyforce](https://github.com/ERMETE-Lab/ROSE-pyforce) repository.
 
 ## Installation
 
 ```bash
 conda create -n foam2dolfinx-env
 conda activate foam2dolfinx-env
-conda install -c conda-forge fenics-dolfinx=0.9.0 mpich pyvista
-```
-Once in the created in environment:
-```bash
-python -m pip install foam2dolfinx
+conda install -c conda-forge fenics-dolfinx mpich pyvista
+pip install foam2dolfinx
 ```
 
-# Example usage
+> [!NOTE]
+> Only single cell-type meshes are supported. Supported VTK cell types: `10` (tetrahedron) and `12` (hexahedron).
 
-## Standard case 
+## Usage
 
-```python
-from foam2dolfinx import OpenFOAMReader
-from pyvista import examples
+### Reading field data
 
-# use foam data from the examples in pyvista
-foam_example = examples.download_cavity(load=False)
-
-# instantiate reader:
-my_reader = OpenFOAMReader(filename=foam_example, cell_type=10)
-
-# read velocity field at t=2.5s
-vel = my_of_reader.create_dolfinx_function(t=2.5, name="U")
-```
-
-> [!NOTE]  
-> Currently only domains with a unique cell type across the domain are supported. Furthermore, only vtk type cells 10 - tetrahedron and 12 - hexhedron are supported.
-
-## Multiple fields
-
-Consider a case where in the same file there is both a temperature and velocity field to read at
+Cell-centred data (e.g. from a finite volume solution) and point data are both supported:
 
 ```python
 from foam2dolfinx import OpenFOAMReader
 
-# instantiate reader:
-my_reader = OpenFOAMReader(filename="my_local_file.foam")
+reader = OpenFOAMReader(filename="my_case.foam", cell_type=12)
 
-# read velocity and temperature fields at t=1s
-vel = my_of_reader.create_dolfinx_function(t=1.0, name="U")
-T = my_of_reader.create_dolfinx_function(t=1.0, name="T")
+# Cell data — maps to a DG-0 function space
+T_cells = reader.create_dolfinx_function_with_cell_data(t=1.0, name="T")
+
+# Point data — maps to a CG-1 function space
+U_points = reader.create_dolfinx_function_with_point_data(t=1.0, name="U")
 ```
 
-## Multiple subdomains
-```python
-from foam2dolfinx import OpenFOAMReader
+### Multi-domain cases
 
-# instantiate reader:
-my_reader = OpenFOAMReader(filename="my_local_file.foam")
-
-# read velocity and temperature fields at t=1s
-vel1 = my_of_reader.create_dolfinx_function(t=3.0, name="U", subdomain="sub1")
-vel2 = my_of_reader.create_dolfinx_function(t=3.0, name="U", subdomain="sub2")
-```
-
-## Tips and tricks
-
-If you are unaware of the time values with data within the OpenFOAM data, you can check with the `time_values` function within the 'reader' attribute of the 'OpenFOAMReader' class:
+For multi-region OpenFOAM cases, pass the subdomain name to read fields from a specific region:
 
 ```python
+reader = OpenFOAMReader(filename="my_case.foam", cell_type=12)
+
+T_fluid = reader.create_dolfinx_function_with_cell_data(t=1.0, name="T", subdomain="fluid")
+T_solid = reader.create_dolfinx_function_with_cell_data(t=1.0, name="T", subdomain="solid")
+```
+
+### Meshtags
+
+Boundary patches and cell zones can be extracted as `dolfinx.mesh.MeshTags` for use in variational forms and boundary condition assignment.
+
+For multi-domain cases, a single merged global mesh is built automatically. Interface facets between subdomains are detected and tagged with sequential IDs continuing after the boundary patch IDs.
+
+```python
+from mpi4py import MPI
+from dolfinx.io import XDMFFile
 from foam2dolfinx import OpenFOAMReader
 
-# instantiate reader:
-my_reader = OpenFOAMReader(filename="my_local_file.foam")
+reader = OpenFOAMReader(filename="my_case.foam", cell_type=12)
 
-# find the time values
-print(my_reader.reader.time_values)
+facet_tags = reader.create_facet_meshtags()
+cell_tags  = reader.create_cell_meshtags()
+
+mesh = reader.dolfinx_meshes_dict["_global"]  # single-domain: use "default"
+
+with XDMFFile(MPI.COMM_WORLD, "facet_meshtags.xdmf", "w") as f:
+    f.write_mesh(mesh)
+    f.write_meshtags(facet_tags, mesh.geometry)
+
+with XDMFFile(MPI.COMM_WORLD, "cell_meshtags.xdmf", "w") as f:
+    f.write_mesh(mesh)
+    f.write_meshtags(cell_tags, mesh.geometry)
 ```
-This should return a list of floats with the time values in the file:
+
+Both methods print a summary to stdout showing each patch/zone name, its assigned integer ID, and how many facets or cells carry that tag.
+
+### Finding available time values
+
+```python
+reader = OpenFOAMReader(filename="my_case.foam", cell_type=12)
+print(reader.times)  # e.g. [0.0, 0.5, 1.0, 2.0]
 ```
-[1.0, 2.0, 3.0]
+
+To find the closest available time to a target value:
+
+```python
+from foam2dolfinx import find_closest_value
+
+t = find_closest_value(reader.times, 1.3)  # returns 1.0 or 2.0
 ```
