@@ -89,90 +89,48 @@ class OpenFOAMReader:
             raise TypeError("cell_type value should be an int")
         self._cell_type = value
 
-    def _read_with_pyvista(self, t: float, subdomain: str | None = "default"):
-        """
-        Reads the OpenFOAM data in the filename provided, passes details of the
-        OpenFOAM mesh to OF_mesh and details of the cells to OF_cells.
+    def _read_with_pyvista(self, t: float, subdomain: str | None = None):
+        """Reads the OpenFOAM multiblock data at time t.
+
+        Populates OF_multiblock and OF_meshes_dict for all subdomains. If
+        subdomain is given, validates it exists and populates OF_cells_dict for
+        it. In single-domain files, OF_cells_dict["default"] is always populated.
+        In multidomain files with no subdomain given, cell data is populated
+        lazily by _create_global_dolfinx_mesh.
 
         Args:
             t: timestamp of the data to read
-            subdomain: Name of the subdmain in the OpenFOAM file, from which a field is
-                extracted
-
-        """
-        self.reader.set_active_time_value(t)  # Set the time value to read data from
-        self.OF_multiblock = self.reader.read()  # Read the data from the OpenFOAM file
-
-        # Check if the reader has a multiblock dataset block named "internalMesh"
-        if "internalMesh" not in self.OF_multiblock.keys():
-            self.multidomain = True
-            named_subdomains = [
-                k for k in self.OF_multiblock.keys() if k != "defaultRegion"
-            ]
-            if subdomain not in named_subdomains:
-                raise ValueError(
-                    f"Subdomain {subdomain} not found in the OpenFOAM file. "
-                    f"Available subdomains: {named_subdomains}"
-                )
-
-        # Extract the internal mesh
-        if self.multidomain:
-            for cell_array_name in self.OF_multiblock.keys():
-                if cell_array_name == "defaultRegion":
-                    continue
-                self.OF_meshes_dict[cell_array_name] = self.OF_multiblock[
-                    cell_array_name
-                ]["internalMesh"]
-        else:
-            self.OF_meshes_dict[subdomain] = self.OF_multiblock["internalMesh"]
-
-        # obtain dictionary of cell types in OF_mesh
-        OF_cell_type_dict = self.OF_meshes_dict[subdomain].cells_dict
-
-        cell_types_in_mesh = [int(k) for k in OF_cell_type_dict.keys()]
-
-        # Raise error if OF_mesh is mixed topology
-        if len(cell_types_in_mesh) > 1:
-            raise NotImplementedError("Cannot support mixed-topology meshes")
-
-        self.OF_cells_dict[subdomain] = OF_cell_type_dict.get(self.cell_type)
-
-        # Raise error if no cells of the specified type are found in the OF_mesh
-        if self.OF_cells_dict[subdomain] is None:
-            raise ValueError(
-                f"No cell type {self.cell_type} found in the mesh. Found "
-                f"{cell_types_in_mesh}"
-            )
-
-    def _read_with_pyvista_all(self, t: float):
-        """Reads the OpenFOAM multiblock data at time t for all subdomains.
-
-        Populates OF_multiblock and OF_meshes_dict for every subdomain without
-        requiring a specific subdomain to be named. For single-domain files,
-        also populates OF_cells_dict["default"]. For multidomain files, cell
-        data for each subdomain is read lazily by _create_global_dolfinx_mesh.
-
-        Args:
-            t: timestamp of the data to read
+            subdomain: if given, validate this subdomain exists and populate its
+                OF_cells_dict entry. Pass None when reading all subdomains
+                without targeting a specific one.
         """
         self.reader.set_active_time_value(t)
         self.OF_multiblock = self.reader.read()
 
         if "internalMesh" not in self.OF_multiblock.keys():
             self.multidomain = True
-            for name in self.OF_multiblock.keys():
-                if name == "defaultRegion":
-                    continue
+            named_subdomains = [
+                k for k in self.OF_multiblock.keys() if k != "defaultRegion"
+            ]
+            if subdomain is not None and subdomain not in named_subdomains:
+                raise ValueError(
+                    f"Subdomain {subdomain} not found in the OpenFOAM file. "
+                    f"Available subdomains: {named_subdomains}"
+                )
+            for name in named_subdomains:
                 self.OF_meshes_dict[name] = self.OF_multiblock[name]["internalMesh"]
         else:
             self.multidomain = False
             self.OF_meshes_dict["default"] = self.OF_multiblock["internalMesh"]
-            OF_cell_type_dict = self.OF_meshes_dict["default"].cells_dict
+            subdomain = "default"
+
+        if subdomain is not None:
+            OF_cell_type_dict = self.OF_meshes_dict[subdomain].cells_dict
             cell_types = [int(k) for k in OF_cell_type_dict.keys()]
             if len(cell_types) > 1:
                 raise NotImplementedError("Cannot support mixed-topology meshes")
-            self.OF_cells_dict["default"] = OF_cell_type_dict.get(self.cell_type)
-            if self.OF_cells_dict["default"] is None:
+            self.OF_cells_dict[subdomain] = OF_cell_type_dict.get(self.cell_type)
+            if self.OF_cells_dict[subdomain] is None:
                 raise ValueError(
                     f"No cell type {self.cell_type} found in the mesh. "
                     f"Found {cell_types}"
@@ -418,7 +376,7 @@ class OpenFOAMReader:
             the dolfinx MeshTags for the facets of the mesh
         """
         t = t if t is not None else next(tv for tv in self.times if tv != 0)
-        self._read_with_pyvista_all(t=t)
+        self._read_with_pyvista(t=t)
 
         if self.multidomain:
             if "_global" not in self.dolfinx_meshes_dict:
@@ -547,7 +505,7 @@ class OpenFOAMReader:
             the dolfinx MeshTags for the cells of the mesh
         """
         t = t if t is not None else next(tv for tv in self.times if tv != 0)
-        self._read_with_pyvista_all(t=t)
+        self._read_with_pyvista(t=t)
 
         if self.multidomain:
             if "_global" not in self.dolfinx_meshes_dict:
