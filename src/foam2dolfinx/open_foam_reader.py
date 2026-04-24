@@ -5,7 +5,8 @@ import dolfinx
 import numpy as np
 import pyvista
 import ufl
-from dolfinx.mesh import create_mesh, meshtags
+from dolfinx.mesh import create_mesh, exterior_facet_indices, meshtags
+from scipy.spatial import cKDTree
 
 from .helpers import tag_boundary_patch
 
@@ -313,24 +314,43 @@ class OpenFOAMReader:
 
         boundary = self.OF_multiblock["boundary"]
 
-        all_facets = np.array([], dtype=np.int32)
-        all_tags = np.array([], dtype=np.int32)
+        # build shared data once across all patches
+        fdim = mesh.topology.dim - 1
+        mesh.topology.create_connectivity(fdim, 0)
+        mesh.topology.create_connectivity(0, fdim)
+        mesh.topology.create_connectivity(fdim, mesh.topology.dim)
+        facet_indices = exterior_facet_indices(mesh.topology)
+        c_to_v = mesh.topology.connectivity(fdim, 0)
+        facet_vertices = np.vstack([c_to_v.links(f) for f in facet_indices])
+        tree = cKDTree(mesh.geometry.x)
 
-        for i, name in enumerate(boundary.keys()):
-            facets, tags = tag_boundary_patch(mesh, boundary[name], i + 1)
-            all_facets = np.concatenate([all_facets, facets])
-            all_tags = np.concatenate([all_tags, tags])
+        all_facets = []
+        all_tags = []
+        patch_summary = {}
 
-            print(f"Tagging {len(facets)} facets for patch {name} with ID {i + 1}")
+        for i, patch_name in enumerate(boundary.keys()):
+            facets, tags = tag_boundary_patch(
+                mesh,
+                boundary[patch_name],
+                i + 1,
+                tree=tree,
+                facet_indices=facet_indices,
+                facet_vertices=facet_vertices,
+            )
+            all_facets.append(facets)
+            all_tags.append(tags)
+            patch_summary[patch_name] = {"id": i + 1, "n_facets": len(facets)}
 
-        facet_meshtags = meshtags(
+        print("Boundary patch summary:")
+        for patch_name, info in patch_summary.items():
+            print(f"  {patch_name}: id={info['id']}, n_facets={info['n_facets']}")
+
+        return meshtags(
             mesh,
-            mesh.topology.dim - 1,
-            all_facets,
-            all_tags,
+            fdim,
+            np.concatenate(all_facets),
+            np.concatenate(all_tags),
         )
-
-        return facet_meshtags
 
 
 def find_closest_value(values: list[float], target: float) -> float:
