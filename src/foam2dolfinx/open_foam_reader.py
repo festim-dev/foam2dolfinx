@@ -30,6 +30,10 @@ class OpenFOAMReader:
             connectivities_dict: dictionary of the OpenFOAM mesh cell connectivity with
                 vertices reordered in a sorted order for mapping with the dolfinx mesh.
             dolfinx_meshes_dict: dictionary of dolfinx meshes
+            vertex_maps_dict: dictionary of vertex maps per subdomain, mapping dolfinx
+                vertex indices to the original OpenFOAM point indices. Built once per
+                subdomain on the first call to create_dolfinx_function_with_point_data
+                and cached for subsequent calls.
 
         Notes:
             The cell type refers to the VTK cell type, a full list of cells and their
@@ -49,6 +53,7 @@ class OpenFOAMReader:
     OF_cells_dict: dict[str, np.ndarray]
     connectivities_dict: dict[str, np.ndarray]
     dolfinx_meshes_dict: dict[str, dolfinx.mesh.Mesh]
+    vertex_maps_dict: dict[str, np.ndarray]
 
     def __init__(self, filename, cell_type: int = 12):
         self.filename = filename
@@ -61,6 +66,7 @@ class OpenFOAMReader:
         self.OF_cells_dict = {}
         self.connectivities_dict = {}
         self.dolfinx_meshes_dict = {}
+        self.vertex_maps_dict = {}
 
     @property
     def cell_type(self):
@@ -103,9 +109,6 @@ class OpenFOAMReader:
                 ]
         else:
             self.OF_meshes_dict[subdomain] = OF_multiblock["internalMesh"]
-
-        # Ensure the mesh has cell data
-        assert hasattr(self.OF_meshes_dict[subdomain], "cells_dict")
 
         # obtain dictionary of cell types in OF_mesh
         OF_cell_type_dict = self.OF_meshes_dict[subdomain].cells_dict
@@ -258,35 +261,32 @@ class OpenFOAMReader:
             self.mesh_vector_element if data.ndim > 1 else self.mesh_scalar_element
         )
 
+        if subdomain not in self.vertex_maps_dict:
+            num_vertices = (
+                mesh.topology.index_map(0).size_local
+                + mesh.topology.index_map(0).num_ghosts
+            )
+            vertex_map = np.empty(num_vertices, dtype=np.int32)
+            c_to_v = mesh.topology.connectivity(mesh.topology.dim, 0)
+            num_cells = (
+                mesh.topology.index_map(mesh.topology.dim).size_local
+                + mesh.topology.index_map(mesh.topology.dim).num_ghosts
+            )
+            vertices = np.array([c_to_v.links(cell) for cell in range(num_cells)])
+            flat_vertices = np.concatenate(vertices)
+            cell_indices = np.repeat(np.arange(num_cells), [len(v) for v in vertices])
+            vertex_positions = np.concatenate([np.arange(len(v)) for v in vertices])
+            vertex_map[flat_vertices] = self.connectivities_dict[subdomain][
+                mesh.topology.original_cell_index
+            ][cell_indices, vertex_positions]
+            self.vertex_maps_dict[subdomain] = vertex_map
+
         function_space = dolfinx.fem.functionspace(mesh, element)
         u = dolfinx.fem.Function(function_space)
-
-        num_vertices = (
-            mesh.topology.index_map(0).size_local
-            + mesh.topology.index_map(0).num_ghosts
-        )
-        vertex_map = np.empty(num_vertices, dtype=np.int32)
-
-        # Get cell-to-vertex connectivity
-        c_to_v = mesh.topology.connectivity(mesh.topology.dim, 0)
-        # Map the OF_mesh vertices to dolfinx_mesh vertices
-        num_cells = (
-            mesh.topology.index_map(mesh.topology.dim).size_local
-            + mesh.topology.index_map(mesh.topology.dim).num_ghosts
-        )
-        vertices = np.array([c_to_v.links(cell) for cell in range(num_cells)])
-        flat_vertices = np.concatenate(vertices)
-        cell_indices = np.repeat(np.arange(num_cells), [len(v) for v in vertices])
-        vertex_positions = np.concatenate([np.arange(len(v)) for v in vertices])
-
-        vertex_map[flat_vertices] = self.connectivities_dict[subdomain][
-            mesh.topology.original_cell_index
-        ][cell_indices, vertex_positions]
-
-        # Assign values in OF_mesh to dolfinx_mesh
-        assert hasattr(self.OF_meshes_dict[subdomain], "point_data")
         u.x.array[:] = (
-            self.OF_meshes_dict[subdomain].point_data[name][vertex_map].flatten()
+            self.OF_meshes_dict[subdomain]
+            .point_data[name][self.vertex_maps_dict[subdomain]]
+            .flatten()
         )
 
         return u
