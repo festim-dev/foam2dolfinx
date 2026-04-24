@@ -204,6 +204,15 @@ class OpenFOAMReader:
         # read the OpenFOAM data in the filename provided
         self._read_with_pyvista(t=t, subdomain=subdomain)
 
+        # test if name is in the cell data of the OF mesh
+        if name not in self.OF_meshes_dict[subdomain].cell_data.keys():
+            raise ValueError(
+                f"Function name: {name} not found in the subdomain: {subdomain}, "
+                "in the OpenFOAM file. "
+                f"Available functions in subdomain: {subdomain} : "
+                f"{self.OF_meshes_dict[subdomain].cell_data.keys()}"
+            )
+
         # create the dolfinx mesh
         if subdomain not in self.dolfinx_meshes_dict:
             self._create_dolfinx_mesh(subdomain=subdomain)
@@ -245,6 +254,15 @@ class OpenFOAMReader:
 
         # read the OpenFOAM data in the filename provided
         self._read_with_pyvista(t=t, subdomain=subdomain)
+
+        # test if name is in the cell data of the OF mesh
+        if name not in self.OF_meshes_dict[subdomain].cell_data.keys():
+            raise ValueError(
+                f"Function name: {name} not found in the subdomain: {subdomain}, "
+                "in the OpenFOAM file. "
+                f"Available functions in subdomain: {subdomain} : "
+                f"{self.OF_meshes_dict[subdomain].cell_data.keys()}"
+            )
 
         # create the dolfinx mesh
         if subdomain not in self.dolfinx_meshes_dict:
