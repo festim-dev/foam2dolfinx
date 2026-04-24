@@ -168,16 +168,18 @@ class OpenFOAMReader:
             )
         degree = 1  # Set polynomial degree
         cell = ufl.Cell(shape)
+        # ufl.Cell.cellname became a property after dolfinx v0.10
+        cell_name = cell.cellname() if callable(cell.cellname) else cell.cellname
         self.mesh_vector_element = basix.ufl.element(
-            "Lagrange", cell.cellname(), degree, shape=(3,)
+            "Lagrange", cell_name, degree, shape=(3,)
         )
         self.mesh_scalar_element = basix.ufl.element(
-            "Lagrange", cell.cellname(), degree, shape=()
+            "Lagrange", cell_name, degree, shape=()
         )
 
         # Create dolfinx Mesh
         mesh_ufl = ufl.Mesh(
-            basix.ufl.element("Lagrange", cell.cellname(), degree, shape=(3,))
+            basix.ufl.element("Lagrange", cell_name, degree, shape=(3,))
         )
         self.dolfinx_meshes_dict[subdomain] = create_mesh(
             comm=MPI.COMM_WORLD,
