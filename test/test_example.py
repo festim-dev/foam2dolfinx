@@ -67,3 +67,30 @@ def test_hot_room(tmpdir):
     assert isinstance(vel_cell, dolfinx.fem.Function)
     assert isinstance(T_cell, dolfinx.fem.Function)
     assert isinstance(nut_cell, dolfinx.fem.Function)
+
+
+def test_mesh_created_when_not_in_dict(tmpdir):
+    zip_path = Path("test/data/test_2Regions.zip")
+    extract_path = Path(tmpdir) / "test_2Regions"
+
+    # Unzip the file
+    with zipfile.ZipFile(zip_path, "r") as zip_ref:
+        zip_ref.extractall(extract_path)
+
+    # Construct the path to the .foam file
+    foam_file = extract_path / "test_2Regions/pv.foam"
+
+    # read the .foam file
+    my_of_reader = OpenFOAMReader(filename=str(foam_file), cell_type=12)
+
+    my_of_reader.create_dolfinx_function_with_cell_data(
+        t=20.0, subdomain="fluid", name="T"
+    )
+
+    assert len(my_of_reader.dolfinx_meshes_dict) == 1
+
+    my_of_reader.create_dolfinx_function_with_cell_data(
+        t=20.0, subdomain="solid", name="T"
+    )
+
+    assert len(my_of_reader.dolfinx_meshes_dict) == 2
