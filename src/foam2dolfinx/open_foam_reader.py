@@ -5,7 +5,10 @@ import dolfinx
 import numpy as np
 import pyvista
 import ufl
-from dolfinx.mesh import create_mesh
+from dolfinx.mesh import create_mesh, exterior_facet_indices, meshtags
+from scipy.spatial import cKDTree
+
+from .helpers import tag_boundary_patch
 
 __all__ = ["OpenFOAMReader", "find_closest_value"]
 
@@ -34,6 +37,10 @@ class OpenFOAMReader:
                 vertex indices to the original OpenFOAM point indices. Built once per
                 subdomain on the first call to create_dolfinx_function_with_point_data
                 and cached for subsequent calls.
+            subdomain_cell_offsets: dictionary mapping each subdomain name to a
+                (start, end) tuple of cell index ranges in the merged pyvista dataset.
+                Populated by _create_global_dolfinx_mesh and used to assign subdomain
+                IDs when building cell and interface facet meshtags.
 
         Notes:
             The cell type refers to the VTK cell type, a full list of cells and their
@@ -54,12 +61,14 @@ class OpenFOAMReader:
     connectivities_dict: dict[str, np.ndarray]
     dolfinx_meshes_dict: dict[str, dolfinx.mesh.Mesh]
     vertex_maps_dict: dict[str, np.ndarray]
+    subdomain_cell_offsets: dict[str, tuple[int, int]]
 
     def __init__(self, filename, cell_type: int = 12):
         self.filename = filename
         self.cell_type = cell_type
 
         self.reader = pyvista.POpenFOAMReader(self.filename)
+        self.OF_multiblock = None
         self.times = self.reader.time_values
         self.multidomain = False
         self.OF_meshes_dict = {}
@@ -67,6 +76,8 @@ class OpenFOAMReader:
         self.connectivities_dict = {}
         self.dolfinx_meshes_dict = {}
         self.vertex_maps_dict = {}
+        self.subdomain_cell_offsets = {}
+        self._pv_cell_subdomain_ids = None
 
     @property
     def cell_type(self):
@@ -78,88 +89,94 @@ class OpenFOAMReader:
             raise TypeError("cell_type value should be an int")
         self._cell_type = value
 
-    def _read_with_pyvista(self, t: float, subdomain: str | None = "default"):
-        """
-        Reads the OpenFOAM data in the filename provided, passes details of the
-        OpenFOAM mesh to OF_mesh and details of the cells to OF_cells.
+    def _read_with_pyvista(self, t: float, subdomain: str | None = None):
+        """Reads the OpenFOAM multiblock data at time t.
+
+        Populates OF_multiblock and OF_meshes_dict for all subdomains. If
+        subdomain is given, validates it exists and populates OF_cells_dict for
+        it. In single-domain files, OF_cells_dict["default"] is always populated.
+        In multidomain files with no subdomain given, cell data is populated
+        lazily by _create_global_dolfinx_mesh.
 
         Args:
             t: timestamp of the data to read
-            subdomain: Name of the subdmain in the OpenFOAM file, from which a field is
-                extracted
-
+            subdomain: if given, validate this subdomain exists and populate its
+                OF_cells_dict entry. Pass None when reading all subdomains
+                without targeting a specific one.
         """
-        self.reader.set_active_time_value(t)  # Set the time value to read data from
-        OF_multiblock = self.reader.read()  # Read the data from the OpenFOAM file
+        self.reader.set_active_time_value(t)
+        self.OF_multiblock = self.reader.read()
 
-        # Check if the reader has a multiblock dataset block named "internalMesh"
-        if "internalMesh" not in OF_multiblock.keys():
+        if "internalMesh" not in self.OF_multiblock.keys():
             self.multidomain = True
-            if subdomain not in OF_multiblock.keys():
+            named_subdomains = [
+                k for k in self.OF_multiblock.keys() if k != "defaultRegion"
+            ]
+            if subdomain is not None and subdomain not in named_subdomains:
                 raise ValueError(
                     f"Subdomain {subdomain} not found in the OpenFOAM file. "
-                    f"Available subdomains: {OF_multiblock.keys()}"
+                    f"Available subdomains: {named_subdomains}"
+                )
+            for name in named_subdomains:
+                self.OF_meshes_dict[name] = self.OF_multiblock[name]["internalMesh"]
+        else:
+            self.multidomain = False
+            self.OF_meshes_dict["default"] = self.OF_multiblock["internalMesh"]
+            subdomain = "default"
+
+        if subdomain is not None:
+            OF_cell_type_dict = self.OF_meshes_dict[subdomain].cells_dict
+            cell_types = [int(k) for k in OF_cell_type_dict.keys()]
+            if len(cell_types) > 1:
+                raise NotImplementedError("Cannot support mixed-topology meshes")
+            self.OF_cells_dict[subdomain] = OF_cell_type_dict.get(self.cell_type)
+            if self.OF_cells_dict[subdomain] is None:
+                raise ValueError(
+                    f"No cell type {self.cell_type} found in the mesh. "
+                    f"Found {cell_types}"
                 )
 
-        # Extract the internal mesh
-        if self.multidomain:
-            for cell_array_name in OF_multiblock.keys():
-                self.OF_meshes_dict[cell_array_name] = OF_multiblock[cell_array_name][
-                    "internalMesh"
-                ]
-        else:
-            self.OF_meshes_dict[subdomain] = OF_multiblock["internalMesh"]
+    def _get_connectivity(self, cells: np.ndarray) -> tuple[str, np.ndarray]:
+        """Reorders a raw VTK cell array into DOLFINx vertex ordering.
 
-        # obtain dictionary of cell types in OF_mesh
-        OF_cell_type_dict = self.OF_meshes_dict[subdomain].cells_dict
+        Args:
+            cells: 2D array of shape (n_cells, n_verts) from PyVista cells_dict
 
-        cell_types_in_mesh = [int(k) for k in OF_cell_type_dict.keys()]
-
-        # Raise error if OF_mesh is mixed topology
-        if len(cell_types_in_mesh) > 1:
-            raise NotImplementedError("Cannot support mixed-topology meshes")
-
-        self.OF_cells_dict[subdomain] = OF_cell_type_dict.get(self.cell_type)
-
-        # Raise error if no cells of the specified type are found in the OF_mesh
-        if self.OF_cells_dict[subdomain] is None:
-            raise ValueError(
-                f"No cell type {self.cell_type} found in the mesh. Found "
-                f"{cell_types_in_mesh}"
-            )
-
-    def _create_dolfinx_mesh(self, subdomain: str | None = "default"):
-        """Creates a dolfinx.mesh.Mesh based on the elements within the OpenFOAM mesh"""
-
-        # Define mesh element and define args conn based on the OF cell type
+        Returns:
+            (shape_name, reordered_connectivity) where shape_name is the UFL
+            cell name ("hexahedron" or "tetrahedron")
+        """
         if self.cell_type == 12:
             shape = "hexahedron"
-            args_conn = np.tile(
-                np.array([0, 1, 3, 2, 4, 5, 7, 6]),
-                (len(self.OF_cells_dict[subdomain]), 1),
-            )
-
+            args_conn = np.tile(np.array([0, 1, 3, 2, 4, 5, 7, 6]), (len(cells), 1))
         elif self.cell_type == 10:
             shape = "tetrahedron"
-            args_conn = np.argsort(
-                self.OF_cells_dict[subdomain], axis=1
-            )  # Sort the cell connectivity
-
+            args_conn = np.argsort(cells, axis=1)
         else:
             raise ValueError(
                 f"Cell type: {self.cell_type}, not supported, please use"
                 " either 12 (hexahedron) or 10 (tetrahedron) cells in OF mesh"
             )
+        rows = np.arange(cells.shape[0])[:, None]
+        return shape, cells[rows, args_conn]
 
-        # create the connectivity between the OpenFOAM and dolfinx meshes
-        # Create row indices
-        rows = np.arange(self.OF_cells_dict[subdomain].shape[0])[:, None]
-        # Reorder connectivity
-        self.connectivities_dict[subdomain] = self.OF_cells_dict[subdomain][
-            rows, args_conn
-        ]
+    def _build_dolfinx_mesh(
+        self, points: np.ndarray, connectivity: np.ndarray, shape: str
+    ) -> dolfinx.mesh.Mesh:
+        """Creates a dolfinx mesh from points and pre-reordered connectivity.
 
-        degree = 1  # Set polynomial degree
+        Also sets mesh_vector_element and mesh_scalar_element on the instance.
+
+        Args:
+            points: (n_points, 3) coordinate array
+            connectivity: (n_cells, n_verts) reordered connectivity from
+                _get_connectivity
+            shape: UFL cell name, e.g. "hexahedron" or "tetrahedron"
+
+        Returns:
+            the new dolfinx.mesh.Mesh
+        """
+        degree = 1
         cell = ufl.Cell(shape)
         # ufl.Cell.cellname became a property after dolfinx v0.10
         cell_name = cell.cellname() if callable(cell.cellname) else cell.cellname
@@ -169,16 +186,85 @@ class OpenFOAMReader:
         self.mesh_scalar_element = basix.ufl.element(
             "Lagrange", cell_name, degree, shape=()
         )
-
-        # Create dolfinx Mesh
         mesh_ufl = ufl.Mesh(
             basix.ufl.element("Lagrange", cell_name, degree, shape=(3,))
         )
-        self.dolfinx_meshes_dict[subdomain] = create_mesh(
-            comm=MPI.COMM_WORLD,
-            cells=self.connectivities_dict[subdomain],
-            x=self.OF_meshes_dict[subdomain].points,
-            e=mesh_ufl,
+        return create_mesh(
+            comm=MPI.COMM_WORLD, cells=connectivity, x=points, e=mesh_ufl
+        )
+
+    def _ensure_mesh(self) -> dolfinx.mesh.Mesh:
+        """Returns the active dolfinx mesh, creating it on first call.
+
+        For multidomain cases returns the merged global mesh; for single-domain
+        returns the default mesh.
+        """
+        if self.multidomain:
+            if "_global" not in self.dolfinx_meshes_dict:
+                self._create_global_dolfinx_mesh()
+            return self.dolfinx_meshes_dict["_global"]
+        else:
+            if "default" not in self.dolfinx_meshes_dict:
+                self._create_dolfinx_mesh(subdomain="default")
+            return self.dolfinx_meshes_dict["default"]
+
+    def _create_dolfinx_mesh(self, subdomain: str | None = "default"):
+        """Creates a dolfinx.mesh.Mesh based on the elements within the OpenFOAM mesh"""
+        shape, connectivity = self._get_connectivity(self.OF_cells_dict[subdomain])
+        self.connectivities_dict[subdomain] = connectivity
+        self.dolfinx_meshes_dict[subdomain] = self._build_dolfinx_mesh(
+            self.OF_meshes_dict[subdomain].points, connectivity, shape
+        )
+
+    def _create_global_dolfinx_mesh(self):
+        """Merges all subdomain pyvista meshes into a single global dolfinx mesh.
+
+        Merges all pyvista meshes with clean() to deduplicate shared interface
+        points, embeds subdomain IDs as cell data so they survive any reordering,
+        and creates a single dolfinx mesh stored under the key "_global".
+        """
+        subdomain_names = list(self.OF_meshes_dict.keys())
+
+        # Populate OF_cells_dict for any subdomains not yet read
+        for name in subdomain_names:
+            if name not in self.OF_cells_dict:
+                OF_cell_type_dict = self.OF_meshes_dict[name].cells_dict
+                cell_types = [int(k) for k in OF_cell_type_dict.keys()]
+                if len(cell_types) > 1:
+                    raise NotImplementedError("Cannot support mixed-topology meshes")
+                cells = OF_cell_type_dict.get(self.cell_type)
+                if cells is None:
+                    raise ValueError(
+                        f"No cell type {self.cell_type} found in subdomain {name}. "
+                        f"Found {cell_types}"
+                    )
+                self.OF_cells_dict[name] = cells
+
+        # Record cumulative cell offsets (used for print summaries only)
+        cumulative = 0
+        for name in subdomain_names:
+            count = len(self.OF_cells_dict[name])
+            self.subdomain_cell_offsets[name] = (cumulative, cumulative + count)
+            cumulative += count
+
+        # Embed subdomain IDs as cell data before merging so the tag survives
+        # merge+clean regardless of any cell reordering the operation applies
+        tagged_meshes = []
+        for j, name in enumerate(subdomain_names):
+            pv_mesh = self.OF_meshes_dict[name].copy()
+            pv_mesh.cell_data["subdomain_id"] = np.full(
+                pv_mesh.n_cells, j + 1, dtype=np.int32
+            )
+            tagged_meshes.append(pv_mesh)
+
+        merged = pyvista.merge(tagged_meshes).clean()
+        self._pv_cell_subdomain_ids = merged.cell_data["subdomain_id"]
+
+        OF_cells = merged.cells_dict.get(self.cell_type)
+        shape, connectivity = self._get_connectivity(OF_cells)
+        self.connectivities_dict["_global"] = connectivity
+        self.dolfinx_meshes_dict["_global"] = self._build_dolfinx_mesh(
+            merged.points, connectivity, shape
         )
 
     def _get_mesh(
@@ -290,6 +376,171 @@ class OpenFOAMReader:
         )
 
         return u
+
+    def create_facet_meshtags(self, t: float | None = None) -> dolfinx.mesh.MeshTags:
+        """Creates a dolfinx.mesh.MeshTags for all tagged facets of the mesh.
+
+        For single-domain meshes, tags external boundary patches (IDs starting at 1).
+        For multidomain meshes, also tags interface facets between subdomains with
+        sequential IDs continuing from the last boundary patch ID.
+
+        Args:
+            t: timestamp of the data to read, defaults to the first available time.
+
+        Returns:
+            the dolfinx MeshTags for the facets of the mesh
+        """
+        t = t if t is not None else next(tv for tv in self.times if tv != 0)
+        self._read_with_pyvista(t=t)
+
+        mesh = self._ensure_mesh()
+
+        # Collect boundary patches — in multidomain files each subdomain block
+        # holds its own "boundary" child; single-domain has one top-level "boundary"
+        if self.multidomain:
+            patches = []
+            for sd_name in self.OF_meshes_dict.keys():
+                sd_block = self.OF_multiblock[sd_name]
+                if "boundary" in sd_block.keys():
+                    boundary = sd_block["boundary"]
+                    for patch_name in boundary.keys():
+                        patches.append((patch_name, boundary[patch_name]))
+        else:
+            boundary = self.OF_multiblock["boundary"]
+            patches = [(name, boundary[name]) for name in boundary.keys()]
+
+        # build shared data once across all patches
+        fdim = mesh.topology.dim - 1
+        mesh.topology.create_connectivity(fdim, 0)
+        mesh.topology.create_connectivity(0, fdim)
+        mesh.topology.create_connectivity(fdim, mesh.topology.dim)
+        facet_indices = exterior_facet_indices(mesh.topology)
+        c_to_v = mesh.topology.connectivity(fdim, 0)
+        facet_vertices = np.vstack([c_to_v.links(f) for f in facet_indices])
+        tree = cKDTree(mesh.geometry.x)
+
+        all_facets = []
+        all_tags = []
+        patch_summary = {}
+
+        for i, (patch_name, patch_dataset) in enumerate(patches):
+            facets, tags = tag_boundary_patch(
+                mesh,
+                patch_dataset,
+                i + 1,
+                tree=tree,
+                facet_indices=facet_indices,
+                facet_vertices=facet_vertices,
+            )
+            all_facets.append(facets)
+            all_tags.append(tags)
+            patch_summary[patch_name] = {"id": i + 1, "n_facets": len(facets)}
+
+        print("Boundary patch summary:")
+        for patch_name, info in patch_summary.items():
+            print(f"  {patch_name}: id={info['id']}, n_facets={info['n_facets']}")
+
+        next_tag = len(patches) + 1
+
+        if self.multidomain:
+            # Map subdomain IDs to dolfinx cell ordering via original_cell_index.
+            # _pv_cell_subdomain_ids is indexed by the merged pyvista cell index,
+            # which original_cell_index maps back to for each dolfinx cell.
+            num_cells = mesh.topology.index_map(mesh.topology.dim).size_local
+            dolfinx_cell_tags = self._pv_cell_subdomain_ids[
+                mesh.topology.original_cell_index[:num_cells]
+            ]
+
+            # Find internal facets where adjacent cells belong to different subdomains
+            f_to_c = mesh.topology.connectivity(fdim, mesh.topology.dim)
+            num_facets = mesh.topology.index_map(fdim).size_local
+            n_adj = np.array([len(f_to_c.links(f)) for f in range(num_facets)])
+            internal_facet_ids = np.where(n_adj == 2)[0].astype(np.int32)
+            cell_pairs = np.array([f_to_c.links(f) for f in internal_facet_ids])
+            tags_a = dolfinx_cell_tags[cell_pairs[:, 0]]
+            tags_b = dolfinx_cell_tags[cell_pairs[:, 1]]
+            is_interface = tags_a != tags_b
+            interface_facet_ids = internal_facet_ids[is_interface]
+            tags_a_iface = tags_a[is_interface]
+            tags_b_iface = tags_b[is_interface]
+
+            # Assign one sequential tag per unique subdomain pair
+            pair_to_tag: dict[tuple[int, int], int] = {}
+            interface_tags = np.empty(len(interface_facet_ids), dtype=np.int32)
+            for j in range(len(interface_facet_ids)):
+                pair_key = (
+                    min(tags_a_iface[j], tags_b_iface[j]),
+                    max(tags_a_iface[j], tags_b_iface[j]),
+                )
+                if pair_key not in pair_to_tag:
+                    pair_to_tag[pair_key] = next_tag
+                    next_tag += 1
+                interface_tags[j] = pair_to_tag[pair_key]
+
+            all_facets.append(interface_facet_ids)
+            all_tags.append(interface_tags)
+
+            print("Interface summary:")
+            sd_names = list(self.subdomain_cell_offsets.keys())
+            for (id_a, id_b), tag in pair_to_tag.items():
+                n_iface = int(np.sum(interface_tags == tag))
+                print(
+                    f"  {sd_names[id_a - 1]}-{sd_names[id_b - 1]}: "
+                    f"id={tag}, n_facets={n_iface}"
+                )
+
+        all_facets_arr = np.concatenate(all_facets)
+        all_tags_arr = np.concatenate(all_tags)
+        sort_idx = np.argsort(all_facets_arr)
+        return meshtags(
+            mesh,
+            fdim,
+            all_facets_arr[sort_idx].astype(np.int32),
+            all_tags_arr[sort_idx].astype(np.int32),
+        )
+
+    def create_cell_meshtags(self, t: float | None = None) -> dolfinx.mesh.MeshTags:
+        """Creates a dolfinx.mesh.MeshTags for the cells of the mesh.
+
+        For single-domain meshes, all cells are tagged with ID 1.
+        For multidomain meshes, cells are tagged with their subdomain ID (1-indexed
+        in the order subdomains appear in the OpenFOAM file).
+
+        Args:
+            t: timestamp of the data to read, defaults to the first available time.
+
+        Returns:
+            the dolfinx MeshTags for the cells of the mesh
+        """
+        t = t if t is not None else next(tv for tv in self.times if tv != 0)
+        self._read_with_pyvista(t=t)
+
+        if self.multidomain:
+            if "_global" not in self.dolfinx_meshes_dict:
+                self._create_global_dolfinx_mesh()
+            mesh = self.dolfinx_meshes_dict["_global"]
+
+            num_cells = mesh.topology.index_map(mesh.topology.dim).size_local
+            cell_tag_array = self._pv_cell_subdomain_ids[
+                mesh.topology.original_cell_index[:num_cells]
+            ]
+
+            print("Cell zone summary:")
+            for j, sd_name in enumerate(self.subdomain_cell_offsets.keys()):
+                n_cells = int(np.sum(cell_tag_array == j + 1))
+                print(f"  {sd_name}: id={j + 1}, n_cells={n_cells}")
+        else:
+            if "default" not in self.dolfinx_meshes_dict:
+                self._create_dolfinx_mesh(subdomain="default")
+            mesh = self.dolfinx_meshes_dict["default"]
+            num_cells = mesh.topology.index_map(mesh.topology.dim).size_local
+            cell_tag_array = np.ones(num_cells, dtype=np.int32)
+
+            print("Cell zone summary:")
+            print(f"  default: id=1, n_cells={num_cells}")
+
+        cell_indices = np.arange(num_cells, dtype=np.int32)
+        return meshtags(mesh, mesh.topology.dim, cell_indices, cell_tag_array)
 
 
 def find_closest_value(values: list[float], target: float) -> float:

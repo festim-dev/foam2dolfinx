@@ -24,7 +24,8 @@ def test_not_finding_function_cell_data(tmpdir):
     with pytest.raises(
         ValueError,
         match=re.escape(
-            "Function name: coucou not found in the subdomain: solid, in the OpenFOAM file. "
+            "Function name: coucou not found in the subdomain: solid, "
+            "in the OpenFOAM file. "
             "Available functions in subdomain: solid : ['T']"
         ),
     ):
@@ -50,7 +51,8 @@ def test_not_finding_function_point_data(tmpdir):
     with pytest.raises(
         ValueError,
         match=re.escape(
-            "Function name: coucou not found in the subdomain: solid, in the OpenFOAM file. "
+            "Function name: coucou not found in the subdomain: solid, "
+            "in the OpenFOAM file. "
             "Available functions in subdomain: solid : ['T']"
         ),
     ):
