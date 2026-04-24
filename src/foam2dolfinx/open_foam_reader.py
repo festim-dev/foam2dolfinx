@@ -156,16 +156,6 @@ class OpenFOAMReader:
             rows, args_conn
         ]
 
-        # Define mesh element
-        if self.cell_type == 12:
-            shape = "hexahedron"
-        elif self.cell_type == 10:
-            shape = "tetrahedron"
-        else:
-            raise ValueError(
-                f"Cell type: {self.cell_type}, not supported, please use"
-                " either 12 (hexahedron) or 10 (tetrahedron) cells in OF mesh"
-            )
         degree = 1  # Set polynomial degree
         cell = ufl.Cell(shape)
         # ufl.Cell.cellname became a property after dolfinx v0.10
