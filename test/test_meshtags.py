@@ -55,7 +55,9 @@ def test_create_facet_meshtags_dim_equals_fdim(two_regions_reader):
 
 
 @pytest.mark.parametrize("tag, expected_count", [(1, 15), (2, 15), (3, 70)])
-def test_create_facet_meshtags_boundary_patch_counts(two_regions_reader, tag, expected_count):
+def test_create_facet_meshtags_boundary_patch_counts(
+    two_regions_reader, tag, expected_count
+):
     ft = two_regions_reader.create_facet_meshtags()
     assert np.sum(ft.values == tag) == expected_count
 

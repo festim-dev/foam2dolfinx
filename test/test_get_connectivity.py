@@ -20,15 +20,21 @@ def tet_reader():
     "cell_type, n_verts, expected_shape",
     [(12, 8, "hexahedron"), (10, 4, "tetrahedron")],
 )
-def test_get_connectivity_returns_correct_shape_name(cell_type, n_verts, expected_shape):
-    reader = OpenFOAMReader(filename=examples.download_cavity(load=False), cell_type=cell_type)
+def test_get_connectivity_returns_correct_shape_name(
+    cell_type, n_verts, expected_shape
+):
+    reader = OpenFOAMReader(
+        filename=examples.download_cavity(load=False), cell_type=cell_type
+    )
     shape_name, _ = reader._get_connectivity(np.zeros((3, n_verts), dtype=int))
     assert shape_name == expected_shape
 
 
 @pytest.mark.parametrize("cell_type, n_verts", [(12, 8), (10, 4)])
 def test_get_connectivity_output_shape_matches_input(cell_type, n_verts):
-    reader = OpenFOAMReader(filename=examples.download_cavity(load=False), cell_type=cell_type)
+    reader = OpenFOAMReader(
+        filename=examples.download_cavity(load=False), cell_type=cell_type
+    )
     cells = np.arange(5 * n_verts).reshape(5, n_verts)
     _, connectivity = reader._get_connectivity(cells)
     assert connectivity.shape == cells.shape
@@ -55,7 +61,9 @@ def test_get_connectivity_tetrahedron_sorts_vertices(tet_reader):
 
 def test_build_dolfinx_mesh_returns_dolfinx_mesh(hex_reader):
     hex_reader._read_with_pyvista(t=0)
-    shape, connectivity = hex_reader._get_connectivity(hex_reader.OF_cells_dict["default"])
+    shape, connectivity = hex_reader._get_connectivity(
+        hex_reader.OF_cells_dict["default"]
+    )
     result = hex_reader._build_dolfinx_mesh(
         hex_reader.OF_meshes_dict["default"].points, connectivity, shape
     )
@@ -65,7 +73,9 @@ def test_build_dolfinx_mesh_returns_dolfinx_mesh(hex_reader):
 @pytest.mark.parametrize("attr", ["mesh_vector_element", "mesh_scalar_element"])
 def test_build_dolfinx_mesh_sets_element_attributes(hex_reader, attr):
     hex_reader._read_with_pyvista(t=0)
-    shape, connectivity = hex_reader._get_connectivity(hex_reader.OF_cells_dict["default"])
+    shape, connectivity = hex_reader._get_connectivity(
+        hex_reader.OF_cells_dict["default"]
+    )
     hex_reader._build_dolfinx_mesh(
         hex_reader.OF_meshes_dict["default"].points, connectivity, shape
     )
