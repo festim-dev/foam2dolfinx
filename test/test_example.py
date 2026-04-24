@@ -53,10 +53,17 @@ def test_hot_room(tmpdir):
     # read the .foam file
     my_of_reader = OpenFOAMReader(filename=str(foam_file), cell_type=12)
 
-    vel = my_of_reader.create_dolfinx_function_with_point_data(t=time, name="U")
-    T = my_of_reader.create_dolfinx_function_with_point_data(t=time, name="T")
-    nut = my_of_reader.create_dolfinx_function_with_point_data(t=time, name="nut")
+    vel_point = my_of_reader.create_dolfinx_function_with_point_data(t=time, name="U")
+    T_point = my_of_reader.create_dolfinx_function_with_point_data(t=time, name="T")
+    nut_point = my_of_reader.create_dolfinx_function_with_point_data(t=time, name="nut")
 
-    assert isinstance(vel, dolfinx.fem.Function)
-    assert isinstance(T, dolfinx.fem.Function)
-    assert isinstance(nut, dolfinx.fem.Function)
+    vel_cell = my_of_reader.create_dolfinx_function_with_cell_data(t=time, name="U")
+    T_cell = my_of_reader.create_dolfinx_function_with_cell_data(t=time, name="T")
+    nut_cell = my_of_reader.create_dolfinx_function_with_cell_data(t=time, name="nut")
+
+    assert isinstance(vel_point, dolfinx.fem.Function)
+    assert isinstance(T_point, dolfinx.fem.Function)
+    assert isinstance(nut_point, dolfinx.fem.Function)
+    assert isinstance(vel_cell, dolfinx.fem.Function)
+    assert isinstance(T_cell, dolfinx.fem.Function)
+    assert isinstance(nut_cell, dolfinx.fem.Function)
