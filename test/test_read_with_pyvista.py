@@ -28,7 +28,7 @@ def test_error_rasied_when_cells_wanted_are_not_in_file_provided():
         my_reader._read_with_pyvista(t=0)
 
 
-def test_error_rasied_when_subdomain_is_not_given_in_multidomain_case(tmpdir):
+def test_error_rasied_when_wrong_subdomain_given_in_multidomain_case(tmpdir):
     zip_path = Path("test/data/test_2Regions.zip")
     extract_path = Path(tmpdir) / "test_2Regions"
 
@@ -45,11 +45,11 @@ def test_error_rasied_when_subdomain_is_not_given_in_multidomain_case(tmpdir):
     with pytest.raises(
         ValueError,
         match=(
-            r"Subdomain None not found in the OpenFOAM file\. "
+            r"Subdomain coucou not found in the OpenFOAM file\. "
             r"Available subdomains: \['fluid', 'solid']"
         ),
     ):
-        my_of_reader._read_with_pyvista(t=20.0, subdomain=None)
+        my_of_reader._read_with_pyvista(t=20.0, subdomain="coucou")
 
 
 @pytest.mark.parametrize("subdomain", ["fluid", "solid"])
