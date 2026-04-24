@@ -7,11 +7,15 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        container_version: [v0.9.0, nightly]
+        container_version: [v0.9.0, v0.10.0, nightly]
     container: dolfinx/dolfinx:${{ matrix.container_version }}
     steps:
         - name: Checkout code
-          uses: actions/checkout@v5
+          uses: actions/checkout@v6
+
+        - name: Configure git safe directory
+          run: |
+            git config --global --add safe.directory '*'
       
         - name: Install local package and dependencies
           run: |
