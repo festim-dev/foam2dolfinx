@@ -5,7 +5,9 @@ import dolfinx
 import numpy as np
 import pyvista
 import ufl
-from dolfinx.mesh import create_mesh
+from dolfinx.mesh import create_mesh, meshtags
+
+from .helpers import tag_boundary_patch
 
 __all__ = ["OpenFOAMReader", "find_closest_value"]
 
@@ -60,6 +62,7 @@ class OpenFOAMReader:
         self.cell_type = cell_type
 
         self.reader = pyvista.POpenFOAMReader(self.filename)
+        self.OF_multiblock = None
         self.times = self.reader.time_values
         self.multidomain = False
         self.OF_meshes_dict = {}
@@ -90,25 +93,25 @@ class OpenFOAMReader:
 
         """
         self.reader.set_active_time_value(t)  # Set the time value to read data from
-        OF_multiblock = self.reader.read()  # Read the data from the OpenFOAM file
+        self.OF_multiblock = self.reader.read()  # Read the data from the OpenFOAM file
 
         # Check if the reader has a multiblock dataset block named "internalMesh"
-        if "internalMesh" not in OF_multiblock.keys():
+        if "internalMesh" not in self.OF_multiblock.keys():
             self.multidomain = True
-            if subdomain not in OF_multiblock.keys():
+            if subdomain not in self.OF_multiblock.keys():
                 raise ValueError(
                     f"Subdomain {subdomain} not found in the OpenFOAM file. "
-                    f"Available subdomains: {OF_multiblock.keys()}"
+                    f"Available subdomains: {self.OF_multiblock.keys()}"
                 )
 
         # Extract the internal mesh
         if self.multidomain:
-            for cell_array_name in OF_multiblock.keys():
-                self.OF_meshes_dict[cell_array_name] = OF_multiblock[cell_array_name][
-                    "internalMesh"
-                ]
+            for cell_array_name in self.OF_multiblock.keys():
+                self.OF_meshes_dict[cell_array_name] = self.OF_multiblock[
+                    cell_array_name
+                ]["internalMesh"]
         else:
-            self.OF_meshes_dict[subdomain] = OF_multiblock["internalMesh"]
+            self.OF_meshes_dict[subdomain] = self.OF_multiblock["internalMesh"]
 
         # obtain dictionary of cell types in OF_mesh
         OF_cell_type_dict = self.OF_meshes_dict[subdomain].cells_dict
@@ -290,6 +293,44 @@ class OpenFOAMReader:
         )
 
         return u
+
+    def create_facet_meshtags(
+        self, t: float = 0, name: str = "U", subdomain: str | None = "default"
+    ) -> dolfinx.mesh.MeshTags:
+        """Creates a dolfinx.mesh.MeshTags for the facets of the mesh based on the
+        boundary patches in the OpenFOAM file.
+
+        Args:
+            t: timestamp of the data to read, default to 0.
+            name: Name of the field in the OpenFOAM file, defaults to "U" for velocity
+            subdomain: Name of the subdmain in the OpenFOAM file, from which a field is
+                extracted
+
+        Returns:
+            the dolfinx MeshTags for the facets of the mesh
+        """
+        mesh = self._get_mesh(t, name, subdomain)
+
+        boundary = self.OF_multiblock["boundary"]
+
+        all_facets = np.array([], dtype=np.int32)
+        all_tags = np.array([], dtype=np.int32)
+
+        for i, name in enumerate(boundary.keys()):
+            facets, tags = tag_boundary_patch(mesh, boundary[name], i + 1)
+            all_facets = np.concatenate([all_facets, facets])
+            all_tags = np.concatenate([all_tags, tags])
+
+            print(f"Tagging {len(facets)} facets for patch {name} with ID {i + 1}")
+
+        facet_meshtags = meshtags(
+            mesh,
+            mesh.topology.dim - 1,
+            all_facets,
+            all_tags,
+        )
+
+        return facet_meshtags
 
 
 def find_closest_value(values: list[float], target: float) -> float:
