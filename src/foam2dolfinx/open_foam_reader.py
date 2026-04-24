@@ -189,7 +189,7 @@ class OpenFOAMReader:
     def create_dolfinx_function_with_cell_data(
         self, t: float, name: str = "U", subdomain: str | None = "default"
     ) -> dolfinx.fem.Function:
-        """Creates a dolfinx.fem.Function from the OpenFOAM file.
+        """Creates a dolfinx.fem.Function from the OpenFOAM file using cell data.
 
         Args:
             t: timestamp of the data to read
@@ -231,7 +231,7 @@ class OpenFOAMReader:
     def create_dolfinx_function_with_point_data(
         self, t: float, name: str = "U", subdomain: str | None = "default"
     ) -> dolfinx.fem.Function:
-        """Creates a dolfinx.fem.Function from the OpenFOAM file.
+        """Creates a dolfinx.fem.Function from the OpenFOAM file using point data.
 
         Args:
             t: timestamp of the data to read
